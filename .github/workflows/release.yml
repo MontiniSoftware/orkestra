@@ -16,24 +16,31 @@ on:
 permissions:
   contents: write
 
-env:
-  MIX_ENV: prod
-  HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
-
 jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
   release:
     name: Publish v${{ inputs.version }}
     runs-on: ubuntu-latest
-
+    needs: ci
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Elixir
-        uses: erlef/setup-beam@v1
+      - uses: erlef/setup-beam@v1
         with:
           otp-version: "27"
           elixir-version: "1.18"
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: mix-${{ runner.os }}-${{ hashFiles('mix.lock') }}
+          restore-keys: mix-${{ runner.os }}-
 
       - name: Verify version matches mix.exs
         run: |
@@ -43,23 +50,18 @@ jobs:
             exit 1
           fi
 
-      - name: Install dependencies
-        run: mix deps.get
-
-      - name: Compile
-        run: mix compile --warnings-as-errors
-
-      - name: Run tests
-        run: mix test
-        env:
-          MIX_ENV: test
+      - run: mix deps.get
 
       - name: Build hex package
         run: mix hex.build
+        env:
+          MIX_ENV: prod
 
       - name: Publish to Hex
         if: ${{ !inputs.dry_run }}
         run: mix hex.publish --yes
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
 
       - name: Create GitHub release
         if: ${{ !inputs.dry_run }}

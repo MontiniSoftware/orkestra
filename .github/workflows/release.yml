@@ -1,0 +1,68 @@
+name: Release to Hex
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (must match mix.exs, e.g. 0.1.0)"
+        required: true
+        type: string
+      dry_run:
+        description: "Dry run (build but don't publish)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  MIX_ENV: prod
+  HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+
+jobs:
+  release:
+    name: Publish v${{ inputs.version }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.18"
+
+      - name: Verify version matches mix.exs
+        run: |
+          MIX_VERSION=$(grep '@version "' mix.exs | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$MIX_VERSION" != "${{ inputs.version }}" ]; then
+            echo "::error::Input version (${{ inputs.version }}) does not match mix.exs version ($MIX_VERSION)"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Compile
+        run: mix compile --warnings-as-errors
+
+      - name: Run tests
+        run: mix test
+        env:
+          MIX_ENV: test
+
+      - name: Build hex package
+        run: mix hex.build
+
+      - name: Publish to Hex
+        if: ${{ !inputs.dry_run }}
+        run: mix hex.publish --yes
+
+      - name: Create GitHub release
+        if: ${{ !inputs.dry_run }}
+        run: gh release create "v${{ inputs.version }}" --title "v${{ inputs.version }}" --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -277,7 +277,7 @@ defmodule Orkestra.Aggregate.Root do
     end
   end
 
-  defp publish_events(events, command) do
+  defp publish_events(events, _command) do
     Tracer.with_span "orkestra.aggregate.publish",
       attributes: %{
         "orkestra.aggregate.events_count" => length(events)

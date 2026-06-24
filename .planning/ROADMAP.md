@@ -56,7 +56,16 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. A projector that exhausts retries has its halted status persisted to the checkpoint store, so the halt is visible and not a silent stall
   5. A developer can query a read model directly using Ecto on the per-projection Repo; the Repo uses its own isolated `migration_source` table and `priv/` directory
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+**Wave 1**
+
+- [ ] 02-01-PLAN.md — Postgres test harness: isolated test Repo, example read-model schema + in-code migration, SQL.Sandbox setup [STORE-04, MIG-01]
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 02-02-PLAN.md — Postgres/Ecto Storage adapter (write/4 returns Multi fragment, reset/2) + real-DB tests [STORE-02, STORE-04, MIG-01]
+- [ ] 02-03-PLAN.md — Projector GenServer: subscribe-from-checkpoint, sequential apply, atomic Multi commit, send_after retry, atomic park+halt + integration tests [PROJ-03, PROJ-04, STORE-03, ERR-04, READ-01]
 
 ### Phase 3: DSL, Supervisor, Mix Tasks, and Config
 
@@ -109,7 +118,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundations | 3/3 | Complete    | 2026-06-24 |
-| 2. Projector GenServer + Ecto Adapter | 0/TBD | Not started | - |
+| 2. Projector GenServer + Ecto Adapter | 0/3 | Not started | - |
 | 3. DSL, Supervisor, Mix Tasks, and Config | 0/TBD | Not started | - |
 | 4. Telemetry & Observability | 0/TBD | Not started | - |
 | 5. MCP Integration and Query Helpers | 0/TBD | Not started | - |

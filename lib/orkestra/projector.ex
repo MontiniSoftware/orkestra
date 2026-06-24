@@ -130,8 +130,12 @@ defmodule Orkestra.Projector do
   operations chained using `:read_model_`-prefixed step names.
   """
   defmacro project(event_module, handler_fn) do
+    # Store the handler as a quoted AST (not evaluated) so __before_compile__
+    # can inject it back into the generated __dispatch__ function body.
+    escaped = Macro.escape(handler_fn)
+
     quote do
-      @projection_handlers {unquote(event_module), unquote(handler_fn)}
+      @projection_handlers {unquote(event_module), unquote(escaped)}
     end
   end
 

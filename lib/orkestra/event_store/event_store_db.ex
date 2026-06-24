@@ -6,7 +6,7 @@ defmodule Orkestra.EventStore.EventStoreDB do
 
   ## Configuration
 
-      config :ultimus, Orkestra.EventStore.EventStoreDB,
+      config :orkestra, Orkestra.EventStore.EventStoreDB,
         connection_string: "esdb://localhost:2113?tls=false"
   """
 
@@ -14,18 +14,40 @@ defmodule Orkestra.EventStore.EventStoreDB do
 
   require Logger
 
+  # Spear exposes the gpb-generated EventStoreDB protobuf records as little
+  # record macros. We use them to decode the raw `append_resp` returned by
+  # `Spear.append/4` with `raw?: true`, so we can read the post-write revision
+  # (which the parsed `:ok` return signature does not surface).
+  require Spear.Records.Streams, as: Streams
+
   @connection __MODULE__.Connection
 
   @impl true
   def load_events(stream_id) do
+    # Full-stream load: read from the beginning; the empty-stream revision is -1.
+    do_load(stream_id, [direction: :forwards], -1)
+  end
+
+  @impl true
+  def load_events(stream_id, from_revision) do
+    # Incremental load: read after `from_revision` (Spear `from:` is exclusive of
+    # the supplied revision when reading forwards); the empty-slice revision is
+    # `from_revision` (the caller's current position).
+    do_load(stream_id, [direction: :forwards, from: from_revision + 1], from_revision)
+  end
+
+  # Shared load body for both `load_events/1` and `load_events/2`. Logs uniformly
+  # on non-`:not_found` Spear errors and on the generic rescue (WR-04), so the
+  # incremental-load path no longer fails silently.
+  defp do_load(stream_id, stream_opts, empty_revision) do
     try do
       events =
-        Spear.stream!(@connection, stream_id, direction: :forwards)
+        Spear.stream!(@connection, stream_id, stream_opts)
         |> Enum.to_list()
 
       case events do
         [] ->
-          {:ok, [], -1}
+          {:ok, [], empty_revision}
 
         events ->
           stored = Enum.map(events, &to_stored_event/1)
@@ -35,7 +57,7 @@ defmodule Orkestra.EventStore.EventStoreDB do
     rescue
       e in Spear.Grpc.Response ->
         if e.status == :not_found do
-          {:ok, [], -1}
+          {:ok, [], empty_revision}
         else
           Logger.error("EventStoreDB load failed",
             stream: stream_id,
@@ -58,68 +80,62 @@ defmodule Orkestra.EventStore.EventStoreDB do
   end
 
   @impl true
-  def load_events(stream_id, from_revision) do
-    try do
-      events =
-        Spear.stream!(@connection, stream_id,
-          direction: :forwards,
-          from: from_revision + 1
-        )
-        |> Enum.to_list()
-
-      case events do
-        [] ->
-          {:ok, [], from_revision}
-
-        events ->
-          stored = Enum.map(events, &to_stored_event/1)
-          revision = List.last(events).metadata.stream_revision
-          {:ok, stored, revision}
-      end
-    rescue
-      e in Spear.Grpc.Response ->
-        if e.status == :not_found do
-          {:ok, [], from_revision}
-        else
-          {:error, e}
-        end
-
-      e ->
-        {:error, e}
-    end
-  end
-
-  @impl true
   def append_events(stream_id, events, expected_revision) do
     spear_events =
       Enum.map(events, fn event ->
+        # `Spear.Event.new/3` does not accept a `:metadata` option — it accepts
+        # `:custom_metadata` (a binary). Serialize the event metadata map to JSON
+        # so correlation/causation/actor metadata survives the append (CR-03).
         Spear.Event.new(
           event.type,
           event.data,
-          metadata: event.metadata
+          custom_metadata: Jason.encode!(event.metadata)
         )
       end)
 
+    # Keep the input contract identical to the InMemory adapter and the declared
+    # `expected_revision()` type (`non_neg_integer() | :any | :no_stream`). We do
+    # NOT special-case `-1`: InMemory rejects it (falls to wrong-version), so a
+    # bare `-1` would diverge between adapters (WR-06). Use `:no_stream` to assert
+    # an empty stream.
     expect =
       case expected_revision do
         :any -> :any
         :no_stream -> :empty
-        -1 -> :empty
-        rev when is_integer(rev) -> rev
+        rev when is_integer(rev) and rev >= 0 -> rev
       end
 
     case Spear.append(spear_events, @connection, stream_id, expect: expect, raw?: true) do
       {:ok, response} ->
-        new_revision = extract_revision(response)
+        case extract_revision(response) do
+          {:ok, new_revision} ->
+            Logger.debug("Events appended",
+              stream: stream_id,
+              count: length(events),
+              revision: new_revision,
+              orkestra: :event_store
+            )
 
-        Logger.debug("Events appended",
-          stream: stream_id,
-          count: length(events),
-          revision: new_revision,
-          orkestra: :event_store
-        )
+            {:ok, new_revision}
 
-        {:ok, new_revision}
+          {:error, :wrong_expected_version} ->
+            Logger.warning("Wrong expected version",
+              stream: stream_id,
+              expected: expected_revision,
+              orkestra: :event_store
+            )
+
+            {:error, :wrong_expected_version}
+
+          :error ->
+            Logger.error("Unexpected EventStoreDB append response",
+              stream: stream_id,
+              response: inspect(response),
+              orkestra: :event_store
+            )
+
+            {:error, {:unexpected_append_response, response}}
+        end
 
       {:error, %Spear.ExpectationViolation{}} ->
         Logger.warning("Wrong expected version",
@@ -200,26 +216,58 @@ defmodule Orkestra.EventStore.EventStoreDB do
   end
 
   defp to_stored_event(%Spear.Event{} = event) do
-    %{
+    base = %{
       id: event.id,
       type: event.type,
       data: event.body,
       metadata: extract_custom_metadata(event),
-      stream_revision: event.metadata.stream_revision,
-      global_position: global_position_from_spear_event(event)
+      stream_revision: event.metadata.stream_revision
     }
+
+    # Only add `:global_position` when a real non-negative position is present.
+    # `to_stored_event/1` is shared by plain reads (where `commit_position` may
+    # be absent) and subscription delivery. Emitting `global_position: nil` would
+    # violate the `stored_event_with_position()` type and break downstream
+    # checkpoint arithmetic with an ArithmeticError (WR-05). The plain
+    # `stored_event()` type does not include `:global_position`, so omitting it
+    # on reads is correct.
+    case global_position_from_spear_event(event) do
+      pos when is_integer(pos) and pos >= 0 -> Map.put(base, :global_position, pos)
+      _ -> base
+    end
   end
 
-  defp extract_custom_metadata(%Spear.Event{metadata: %{custom_metadata: meta}})
-       when is_map(meta),
-       do: meta
+  # EventStoreDB / Spear surfaces `custom_metadata` as a binary (typically a
+  # JSON string), never a map (see deps/spear/lib/spear/event.ex). Decode it
+  # back into the metadata map written on append (CR-04).
+  defp extract_custom_metadata(%Spear.Event{metadata: %{custom_metadata: bin}})
+       when is_binary(bin) and bin != "" do
+    case Jason.decode(bin) do
+      {:ok, map} when is_map(map) -> map
+      _ -> %{}
+    end
+  end
 
   defp extract_custom_metadata(_), do: %{}
 
-  defp extract_revision(response) do
-    case response do
-      %{current_revision: rev} when is_integer(rev) -> rev
-      _ -> -1
+  # With `raw?: true`, `Spear.append/4` returns `{:ok, append_resp_record}`.
+  # The success branch carries the post-write revision in the nested
+  # `AppendResp.Success` record's `current_revision_option` oneof; a new stream
+  # reports `{:no_stream, _}` (revision -1). A `wrong_expected_version` result
+  # is also possible here when Spear is in raw mode. Returns `{:ok, revision}`,
+  # `{:error, :wrong_expected_version}`, or `:error` for an unexpected shape
+  # (CR-02). Never returns a silent hardcoded -1 on the fall-through.
+  defp extract_revision(Streams.append_resp(result: {:success, success})) do
+    case Streams.append_resp_success(success, :current_revision_option) do
+      {:current_revision, rev} when is_integer(rev) -> {:ok, rev}
+      {:no_stream, _} -> {:ok, -1}
+      _ -> :error
     end
   end
+
+  defp extract_revision(Streams.append_resp(result: {:wrong_expected_version, _})) do
+    {:error, :wrong_expected_version}
+  end
+
+  defp extract_revision(_), do: :error
 end

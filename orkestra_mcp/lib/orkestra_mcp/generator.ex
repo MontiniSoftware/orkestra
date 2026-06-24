@@ -205,7 +205,7 @@ defmodule OrkestraMcp.Generator do
     defmodule #{module_name} do
       use Orkestra.Projector,
         repo: #{repo_module},
-        event_store: Orkestra.EventStore
+        event_store: Orkestra.EventStore.InMemory
 
     #{project_clauses}
     end

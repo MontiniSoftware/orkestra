@@ -141,7 +141,7 @@ defmodule Orkestra.Projector do
 
   defmacro __using__(opts) do
     repo = Keyword.fetch!(opts, :repo)
-    event_store = Keyword.get(opts, :event_store, Orkestra.EventStore)
+    event_store = Keyword.get(opts, :event_store, Orkestra.EventStore.InMemory)
     name_override = Keyword.get(opts, :name, nil)
     max_retries = Keyword.get(opts, :max_retries, 5)
     backoff_base_ms = Keyword.get(opts, :backoff_base_ms, 500)
@@ -186,11 +186,13 @@ defmodule Orkestra.Projector do
         inspect(env.module)
       end
 
-    # Derive filesystem slug: "MyApp.OrderProjector" -> "myapp_order_projector"
+    # Derive filesystem slug: "MyApp.OrderProjector" -> "my_app_order_projector"
+    # Uses Macro.underscore per-segment to match MCP generator convention
     slug =
       projector_name
-      |> String.downcase()
-      |> String.replace(".", "_")
+      |> String.split(".")
+      |> Enum.map(&Macro.underscore/1)
+      |> Enum.join("_")
 
     migrations_path = Path.join(["priv", "projections", slug, "migrations"])
     migration_source = "projection_#{slug}_schema_migrations"

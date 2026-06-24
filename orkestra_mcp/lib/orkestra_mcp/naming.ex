@@ -17,6 +17,20 @@ defmodule OrkestraMcp.Naming do
   end
 
   @doc """
+  Converts a module name to a pluralised table name.
+
+      iex> OrkestraMcp.Naming.module_to_table_name("MyApp.Orders.OrderReadModel")
+      "order_read_models"
+  """
+  def module_to_table_name(module_name) do
+    module_name
+    |> String.split(".")
+    |> List.last()
+    |> Macro.underscore()
+    |> Kernel.<>("s")
+  end
+
+  @doc """
   Infers the top-level application module from a project's mix.exs.
 
       iex> OrkestraMcp.Naming.infer_app_module("/path/to/project")

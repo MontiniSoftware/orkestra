@@ -313,11 +313,15 @@ defmodule Orkestra.Projector.GenServer do
       occurred_at: now
     }
 
-    # Do NOT advance last_position past the failing event so that on a future
-    # restart (after the dead-letter is resolved) the event will be re-attempted.
+    # Set last_position to position - 1 so that on a future restart the
+    # failing event is NOT skipped: subscribe_from_position uses exclusive >
+    # semantics, so subscribing from (position - 1) delivers events at
+    # global_position > (position - 1), which includes the failing event (PROJ-03).
+    halt_position = event.global_position - 1
+
     halted_checkpoint = %Checkpoint{
       projector_name: projector_name,
-      last_position: event.global_position,
+      last_position: halt_position,
       halted: true,
       halted_at: now
     }
@@ -330,7 +334,7 @@ defmodule Orkestra.Projector.GenServer do
           set: [
             halted: true,
             halted_at: now,
-            last_position: event.global_position,
+            last_position: halt_position,
             updated_at: now
           ]
         ],

@@ -43,18 +43,18 @@ if Code.ensure_loaded?(Ecto.Multi) do
     # once for the whole test module. DDL is not rolled back per-test by the
     # sandbox — only DML rows are cleaned up on checkout/checkin.
     #
-    # Checkout a connection for setup_all so Ecto.Migrator can run DDL. The
-    # sandbox is in :manual mode, so no connection is available by default.
+    # Migrations run via unboxed_run so Ecto.Migrator's internal task gets a
+    # real (non-sandbox) connection.  DDL is not rolled back per-test by the
+    # sandbox, so running once here is idempotent and safe.
     setup_all do
-      :ok = Ecto.Adapters.SQL.Sandbox.checkout(ProjectionRepo)
-      Ecto.Adapters.SQL.Sandbox.mode(ProjectionRepo, {:shared, self()})
-
-      Ecto.Migrator.run(
-        ProjectionRepo,
-        [{1, Orkestra.Projection.Migration}],
-        :up,
-        all: true
-      )
+      Ecto.Adapters.SQL.Sandbox.unboxed_run(ProjectionRepo, fn ->
+        Ecto.Migrator.run(
+          ProjectionRepo,
+          [{1, Orkestra.Projection.Migration}],
+          :up,
+          all: true
+        )
+      end)
 
       :ok
     end

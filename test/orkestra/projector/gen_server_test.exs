@@ -23,27 +23,51 @@ if Code.ensure_loaded?(Ecto.Multi) do
     # ---------------------------------------------------------------------------
 
     setup_all do
-      # Run the Orkestra checkpoint / dead_letter migrations (idempotent with `all: true`)
-      Ecto.Migrator.run(
-        ProjectionRepo,
-        [{1, Orkestra.Projection.Migration}],
-        :up,
-        all: true
-      )
+      # Migrations run via unboxed_run so Ecto.Migrator uses a real (non-sandbox)
+      # connection.  migration_lock: false prevents the migrator from spawning a
+      # Task for advisory locking, which can't inherit the checked-out connection.
+      # DDL is not rolled back per-test by the sandbox, so this is idempotent.
+      Ecto.Adapters.SQL.Sandbox.unboxed_run(ProjectionRepo, fn ->
+        # Run the Orkestra checkpoint / dead_letter migrations (idempotent with `all: true`).
+        # Uses the repo's default migration_source ("orkestra_test_projection_schema_migrations").
+        Ecto.Migrator.run(
+          ProjectionRepo,
+          [{1, Orkestra.Projection.Migration}],
+          :up,
+          all: true,
+          migration_lock: false
+        )
 
-      # Run the test read-model table migration
-      Ecto.Migrator.run(
-        ProjectionRepo,
-        [{ProjectionMigrations.version(), ProjectionMigrations}],
-        :up,
-        all: true
-      )
+        # Run the test read-model migration with a separate migration_source table so
+        # its version 1 does not collide with Orkestra.Projection.Migration version 1.
+        # The Ecto.Migrator always reads migration_source from repo.config(), so we
+        # temporarily patch Application env to override it.
+        base_config = Application.get_env(:orkestra, ProjectionRepo, [])
+        patched_config = Keyword.put(base_config, :migration_source, "test_read_model_schema_migrations")
+        Application.put_env(:orkestra, ProjectionRepo, patched_config)
+
+        Ecto.Migrator.run(
+          ProjectionRepo,
+          [{ProjectionMigrations.version(), ProjectionMigrations}],
+          :up,
+          all: true,
+          migration_lock: false
+        )
+
+        # Restore original config
+        Application.put_env(:orkestra, ProjectionRepo, base_config)
+      end)
 
       :ok
     end
 
     setup do
       :ok = Ecto.Adapters.SQL.Sandbox.checkout(ProjectionRepo)
+      # Shared mode lets all processes started in this test (including the
+      # ProjectorGenServer spawned by start_supervised!) access the sandbox
+      # connection without an explicit allow/2 call — eliminating the race
+      # between GenServer's deferred :load_checkpoint and Sandbox.allow.
+      Ecto.Adapters.SQL.Sandbox.mode(ProjectionRepo, {:shared, self()})
 
       # Start a fresh InMemory adapter for each test (supervisor cleans it up after).
       # The InMemory API is bound to __MODULE__ so a single named instance per test suffices.

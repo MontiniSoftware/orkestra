@@ -19,12 +19,26 @@ if Code.ensure_loaded?(Ecto.Multi) do
     # test but does not roll back DDL — so the table is created once and rows are
     # cleaned up automatically by the sandbox on each checkout/checkin cycle.
     setup_all do
-      Ecto.Migrator.run(
-        ProjectionRepo,
-        [{ProjectionMigrations.version(), ProjectionMigrations}],
-        :up,
-        all: true
-      )
+      # Migrations run via unboxed_run so Ecto.Migrator uses a real (non-sandbox)
+      # connection.  migration_lock: false prevents the migrator from spawning a
+      # Task for advisory locking, which can't inherit the checked-out connection.
+      # Uses a separate migration_source table to avoid version conflicts with
+      # Orkestra.Projection.Migration (both use version 1).
+      Ecto.Adapters.SQL.Sandbox.unboxed_run(ProjectionRepo, fn ->
+        base_config = Application.get_env(:orkestra, ProjectionRepo, [])
+        patched_config = Keyword.put(base_config, :migration_source, "test_read_model_schema_migrations")
+        Application.put_env(:orkestra, ProjectionRepo, patched_config)
+
+        Ecto.Migrator.run(
+          ProjectionRepo,
+          [{ProjectionMigrations.version(), ProjectionMigrations}],
+          :up,
+          all: true,
+          migration_lock: false
+        )
+
+        Application.put_env(:orkestra, ProjectionRepo, base_config)
+      end)
 
       :ok
     end

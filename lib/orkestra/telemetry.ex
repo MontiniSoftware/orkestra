@@ -50,6 +50,17 @@ defmodule Orkestra.Telemetry do
     Map.merge(base, metadata_attrs(event.metadata))
   end
 
+  @doc "Creates span attributes for a projector event-processing span."
+  @spec projector_span_attrs(String.t(), map(), non_neg_integer()) :: map()
+  def projector_span_attrs(projector_name, event, position) do
+    %{
+      "orkestra.projector.name" => projector_name,
+      "orkestra.projector.position" => position,
+      "orkestra.event.type" => event.type,
+      "orkestra.event.id" => event[:id] || ""
+    }
+  end
+
   @doc "Creates span attributes from Orkestra metadata."
   def metadata_attrs(nil), do: %{}
 

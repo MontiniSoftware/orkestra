@@ -15,7 +15,7 @@ defmodule Orkestra.Test.ProjectionReadModel do
   end
 
   @doc "Builds a changeset for inserting or updating a read-model row."
-  @spec changeset(t(), map()) :: Ecto.Changeset.t()
+  @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
   def changeset(read_model, attrs) do
     read_model
     |> cast(attrs, [:projector_name, :position, :payload])

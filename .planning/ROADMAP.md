@@ -127,12 +127,12 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 1**
 
-- [ ] 05-01-PLAN.md — Generator functions (gen_projection, gen_read_model, gen_queries, migrations) + Naming helper + unit tests [MCP-01, MCP-02, READ-02]
+- [x] 05-01-PLAN.md — Generator functions (gen_projection, gen_read_model, gen_queries, migrations) + Naming helper + unit tests [MCP-01, MCP-02, READ-02]
 
 **Wave 2** *(parallel -- no file overlap)*
 
-- [ ] 05-02-PLAN.md — Tool modules (GenProjection, GenReadModel, GenQueries) + tool tests [MCP-01, MCP-02, READ-02]
-- [ ] 05-03-PLAN.md — Introspection extension (detect_projectors) + ListProjections resource + domain_map update + Server registration + tests [MCP-03]
+- [x] 05-02-PLAN.md — Tool modules (GenProjection, GenReadModel, GenQueries) + tool tests [MCP-01, MCP-02, READ-02]
+- [x] 05-03-PLAN.md — Introspection extension (detect_projectors) + ListProjections resource + domain_map update + Server registration + tests [MCP-03]
 
 ## Progress
 

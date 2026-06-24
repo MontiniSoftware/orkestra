@@ -29,7 +29,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. `Orkestra.Projection.Checkpoint` and `Orkestra.Projection.DeadLetter` Ecto schemas exist with Orkestra-owned migrations that create the `projection_checkpoints` and `projection_dead_letters` tables
   3. `Orkestra.Projector.Lifecycle` pure functions correctly classify errors, compute retry delays, and decide halt — verifiable via unit tests with no I/O
   4. The `Orkestra.EventStore` behaviour exposes a `subscribe_from_position/3` callback; both InMemory and EventStoreDB adapters implement it, and the InMemory emulation delivers events in order during tests
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 01-01-PLAN.md — Optional Ecto deps + pure Projector.Lifecycle (retry/backoff/halt) [ERR-01, ERR-03]
+- [ ] 01-02-PLAN.md — Storage behaviour + EventStore subscribe_from_position/3 (both adapters) [STORE-01, PROJ-02]
+- [ ] 01-03-PLAN.md — Checkpoint + DeadLetter Ecto schemas + Orkestra-owned migration [ERR-02, ERR-03]
 
 ### Phase 2: Projector GenServer + Ecto Adapter
 **Goal**: A projector GenServer processes events end-to-end — subscribing from its checkpoint, catching up, going live, retrying errors, parking exhausted events, and halting — with checkpoint and read-model writes committed atomically in one Ecto transaction, in a fully isolated per-projection Repo
@@ -84,7 +87,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundations | 0/TBD | Not started | - |
+| 1. Foundations | 0/3 | Not started | - |
 | 2. Projector GenServer + Ecto Adapter | 0/TBD | Not started | - |
 | 3. DSL, Supervisor, Mix Tasks, and Config | 0/TBD | Not started | - |
 | 4. Telemetry & Observability | 0/TBD | Not started | - |

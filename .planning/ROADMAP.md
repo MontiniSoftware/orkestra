@@ -84,11 +84,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — DSL macro (`use Orkestra.Projector`) + Projection Supervisor + unit tests [PROJ-01, PROJ-05, CFG-01, CFG-02, CFG-03]
+- [x] 03-01-PLAN.md — DSL macro (`use Orkestra.Projector`) + Projection Supervisor + unit tests [PROJ-01, PROJ-05, CFG-01, CFG-02, CFG-03]
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 03-02-PLAN.md — Mix tasks (migrate/rollback/drop/rebuild) + integration tests [MIG-02, MIG-03, MIG-04, RBLD-01, RBLD-02, CFG-01, CFG-03]
+- [x] 03-02-PLAN.md — Mix tasks (migrate/rollback/drop/rebuild) + integration tests [MIG-02, MIG-03, MIG-04, RBLD-01, RBLD-02, CFG-01, CFG-03]
 
 ### Phase 4: Telemetry & Observability
 

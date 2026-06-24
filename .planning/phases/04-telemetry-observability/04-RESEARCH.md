@@ -509,17 +509,13 @@ end
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should TEL-03 rebuild_total be available during Phase 4 or only Phase 3?**
-   - What we know: Phase 4 depends on Phase 3 (ROADMAP dependency stated). If Phase 3 is not complete, rebuild mode state tracking can still be wired up — the metric just won't fire until Phase 3's mix task passes the `rebuild_total` config key.
-   - What's unclear: Whether Phase 4 should be mergeable before Phase 3 completes or only after.
-   - Recommendation: Implement TEL-03 instrumentation in Phase 4 (GenServer state + telemetry execute call). The integration with Phase 3's mix task is deferred but the contract is defined here. Tests can exercise TEL-03 by manually setting `rebuild_total` in the GenServer config.
+1. **Should TEL-03 rebuild_total be available during Phase 4 or only Phase 3?** — RESOLVED
+   - Resolution: Implement TEL-03 instrumentation in Phase 4 (GenServer state + `:telemetry.execute` call). `rebuild_total` is passed via GenServer config. Tests exercise TEL-03 by manually setting `rebuild_total` in the config. Phase 3's rebuild mix task will populate it at runtime.
 
-2. **Where exactly does `last_seen_position` update — on receive or on commit?**
-   - What we know: `last_seen_position` tracks the head of events the projector is aware of. Updating on receive (in `handle_info` pattern match) is simpler and gives a tighter lag window.
-   - What's unclear: Whether halted projectors should update `last_seen_position` while discarding events (lag would grow visibly).
-   - Recommendation: Update `last_seen_position` even in the halted discard path. This makes lag metrics for halted projectors _honest_ — an operator can see the lag is growing even though the projector is stuck.
+2. **Where exactly does `last_seen_position` update — on receive or on commit?** — RESOLVED
+   - Resolution: Update on receive in `handle_info` (both normal and halted clauses). Halted projectors also update `last_seen_position` so lag metrics stay honest — operators see growing lag on stuck projectors.
 
 ---
 

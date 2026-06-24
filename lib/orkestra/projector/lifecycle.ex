@@ -24,6 +24,14 @@ defmodule Orkestra.Projector.Lifecycle do
   D-05 mandates that this module is pure — no I/O.
   """
 
+  import Bitwise, only: [bsl: 2]
+
+  # Max bit-shift for exponential backoff. BEAM integers are arbitrary-precision,
+  # so this is purely a defensive clamp: any reasonable config hits `backoff_cap_ms`
+  # long before attempt 62, so the cap dominates well before this matters (IN-02,
+  # RESEARCH.md Pitfall 5).
+  @max_shift 62
+
   @type config :: %{
           max_retries: non_neg_integer(),
           backoff_base_ms: non_neg_integer(),
@@ -54,13 +62,12 @@ defmodule Orkestra.Projector.Lifecycle do
   """
   @spec next_delay(non_neg_integer(), config()) :: non_neg_integer()
   def next_delay(attempt, config \\ @default_config) do
-    import Bitwise, only: [bsl: 2]
     base = config.backoff_base_ms
     cap = config.backoff_cap_ms
-    # Clamp the shift to 62 to prevent unbounded BEAM integer growth for large attempts.
-    # The cap will be hit long before attempt 62 with any reasonable config, so this
-    # guard is purely defensive (RESEARCH.md Pitfall 5).
-    safe_shift = min(attempt, 62)
+    # Clamp the shift to @max_shift to prevent unbounded BEAM integer growth for
+    # large attempts. The cap will be hit long before that with any reasonable
+    # config, so this guard is purely defensive (RESEARCH.md Pitfall 5).
+    safe_shift = min(attempt, @max_shift)
     min(cap, base * bsl(1, safe_shift))
   end
 

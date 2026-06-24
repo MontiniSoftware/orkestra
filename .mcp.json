@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "orkestra": {
+      "command": "/data/progetti/orkestra/orkestra_mcp/orkestra_mcp",
+      "args": ["--project-dir", "/data/progetti/orkestra"]
+    }
+  }
+}

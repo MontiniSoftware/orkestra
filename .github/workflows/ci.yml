@@ -59,3 +59,58 @@ jobs:
 
       - run: mix deps.get
       - run: mix test
+
+  compile_mcp:
+    name: Compile MCP
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: orkestra_mcp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.18"
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            orkestra_mcp/deps
+            orkestra_mcp/_build
+          key: mix-mcp-${{ runner.os }}-${{ hashFiles('orkestra_mcp/mix.lock') }}
+          restore-keys: mix-mcp-${{ runner.os }}-
+
+      - run: mix deps.get
+      - run: mix compile --warnings-as-errors
+
+  test_mcp:
+    name: Test MCP
+    runs-on: ubuntu-latest
+    needs: compile_mcp
+    defaults:
+      run:
+        working-directory: orkestra_mcp
+    env:
+      MIX_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.18"
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            orkestra_mcp/deps
+            orkestra_mcp/_build
+          key: mix-mcp-${{ runner.os }}-${{ hashFiles('orkestra_mcp/mix.lock') }}
+          restore-keys: mix-mcp-${{ runner.os }}-
+
+      - run: mix deps.get
+      - run: mix test

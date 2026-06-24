@@ -106,11 +106,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 1**
 
-- [ ] 04-01-PLAN.md — OTel span wrapping + :telemetry metric events in GenServer + Telemetry helper [TEL-01, TEL-02, TEL-03, TEL-04]
+- [x] 04-01-PLAN.md — OTel span wrapping + :telemetry metric events in GenServer + Telemetry helper [TEL-01, TEL-02, TEL-03, TEL-04]
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 04-02-PLAN.md — Telemetry tests for lag, rebuild progress, halt, and retry events [TEL-01, TEL-02, TEL-03, TEL-04]
+- [x] 04-02-PLAN.md — Telemetry tests for lag, rebuild progress, halt, and retry events [TEL-01, TEL-02, TEL-03, TEL-04]
 
 ### Phase 5: MCP Integration and Query Helpers
 
@@ -123,7 +123,16 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. MCP introspection resources (`list_projections`, `domain_map`) surface all defined projectors and their associated read models alongside existing aggregates and event handlers
   3. An optional generated `Queries` module per read model exposes at minimum `list/1` (paged) and `get_by/2`; a developer opting in gets working query helpers without writing boilerplate
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+**Wave 1**
+
+- [ ] 05-01-PLAN.md — Generator functions (gen_projection, gen_read_model, gen_queries, migrations) + Naming helper + unit tests [MCP-01, MCP-02, READ-02]
+
+**Wave 2** *(parallel -- no file overlap)*
+
+- [ ] 05-02-PLAN.md — Tool modules (GenProjection, GenReadModel, GenQueries) + tool tests [MCP-01, MCP-02, READ-02]
+- [ ] 05-03-PLAN.md — Introspection extension (detect_projectors) + ListProjections resource + domain_map update + Server registration + tests [MCP-03]
 
 ## Progress
 
@@ -136,4 +145,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Projector GenServer + Ecto Adapter | 3/3 | Complete   | 2026-06-24 |
 | 3. DSL, Supervisor, Mix Tasks, and Config | 0/2 | Not started | - |
 | 4. Telemetry & Observability | 0/2 | Not started | - |
-| 5. MCP Integration and Query Helpers | 0/TBD | Not started | - |
+| 5. MCP Integration and Query Helpers | 0/3 | Not started | - |

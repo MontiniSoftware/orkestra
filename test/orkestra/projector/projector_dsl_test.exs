@@ -29,13 +29,13 @@ if Code.ensure_loaded?(Ecto.Multi) do
         repo: SomeRepo,
         event_store: SomeEventStore
 
-      project Orkestra.Projector.ProjectorDslTest.OrderPlaced, fn _event, multi ->
+      project(Orkestra.Projector.ProjectorDslTest.OrderPlaced, fn _event, multi ->
         multi
-      end
+      end)
 
-      project Orkestra.Projector.ProjectorDslTest.OrderCancelled, fn _event, multi ->
+      project(Orkestra.Projector.ProjectorDslTest.OrderCancelled, fn _event, multi ->
         multi
-      end
+      end)
     end
 
     # -------------------------------------------------------------------------
@@ -50,9 +50,9 @@ if Code.ensure_loaded?(Ecto.Multi) do
         event_store: SomeEventStore,
         name: "custom_orders"
 
-      project Orkestra.Projector.ProjectorDslTest.OrderPlaced, fn _event, multi ->
+      project(Orkestra.Projector.ProjectorDslTest.OrderPlaced, fn _event, multi ->
         multi
-      end
+      end)
     end
 
     # -------------------------------------------------------------------------

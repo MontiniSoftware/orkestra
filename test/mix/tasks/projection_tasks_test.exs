@@ -1,0 +1,180 @@
+if Code.ensure_loaded?(Ecto.Multi) do
+  # Test projector module that implements __projection_config__/0 without using
+  # the DSL macro — tests the mix tasks' contract directly, not the macro itself.
+  defmodule Mix.Tasks.Orkestra.Projection.TasksTest.TestProjector do
+    @moduledoc false
+
+    @spec __projection_config__() :: map()
+    def __projection_config__ do
+      %{
+        repo: Orkestra.Test.ProjectionRepo,
+        projector_name: "TasksTest.TestProjector",
+        migrations_path: "test/support/task_test_migrations",
+        migration_source: "test_task_projection_migrations"
+      }
+    end
+
+    @spec child_spec(keyword()) :: Supervisor.child_spec()
+    def child_spec(_opts \\ []) do
+      # Minimal child spec using an Agent — no DB dependency, just OTP lifecycle.
+      %{
+        id: __MODULE__,
+        start: {Agent, :start_link, [fn -> :running end, [name: __MODULE__]]}
+      }
+    end
+  end
+
+  defmodule Mix.Tasks.Orkestra.Projection.TasksTest do
+    @moduledoc false
+
+    use ExUnit.Case, async: false
+
+    @moduletag :postgres
+
+    import Ecto.Query, only: [from: 2]
+
+    alias Orkestra.Projection.Checkpoint
+    alias Orkestra.Test.ProjectionRepo
+
+    @test_projector_str "Mix.Tasks.Orkestra.Projection.TasksTest.TestProjector"
+    @test_projector_name "TasksTest.TestProjector"
+
+    # Set up the shared projection_checkpoints / projection_dead_letters tables
+    # once for the whole test module. DDL is not rolled back per-test by the
+    # sandbox — only DML rows are cleaned up on checkout/checkin.
+    #
+    # Checkout a connection for setup_all so Ecto.Migrator can run DDL. The
+    # sandbox is in :manual mode, so no connection is available by default.
+    setup_all do
+      :ok = Ecto.Adapters.SQL.Sandbox.checkout(ProjectionRepo)
+      Ecto.Adapters.SQL.Sandbox.mode(ProjectionRepo, {:shared, self()})
+
+      Ecto.Migrator.run(
+        ProjectionRepo,
+        [{1, Orkestra.Projection.Migration}],
+        :up,
+        all: true
+      )
+
+      :ok
+    end
+
+    setup do
+      :ok = Ecto.Adapters.SQL.Sandbox.checkout(ProjectionRepo)
+      :ok
+    end
+
+    describe "Mix.Tasks.Orkestra.Projection.Migrate" do
+      test "raises Mix.Error when no module name provided" do
+        assert_raise Mix.Error, fn ->
+          Mix.Tasks.Orkestra.Projection.Migrate.run([])
+        end
+      end
+
+      test "runs pending migrations and creates the read-model table" do
+        # Run migrate — creates the task_test_read_model table
+        Mix.Tasks.Orkestra.Projection.Migrate.run([@test_projector_str])
+
+        # Verify by inserting a row into the created table (would raise if table missing)
+        {:ok, _} =
+          ProjectionRepo.insert_all(
+            "task_test_read_model",
+            [
+              %{
+                id: Ecto.UUID.generate(),
+                projector_name: @test_projector_name,
+                value: "present"
+              }
+            ],
+            on_conflict: :nothing
+          )
+
+        # Clean up: roll back the migration so the table is gone for other tests
+        Mix.Tasks.Orkestra.Projection.Rollback.run([@test_projector_str, "--all"])
+      end
+    end
+
+    describe "Mix.Tasks.Orkestra.Projection.Rollback" do
+      test "raises Mix.Error when no module name provided" do
+        assert_raise Mix.Error, fn ->
+          Mix.Tasks.Orkestra.Projection.Rollback.run([])
+        end
+      end
+
+      test "migrate then rollback round-trip leaves no table behind" do
+        Mix.Tasks.Orkestra.Projection.Migrate.run([@test_projector_str])
+        Mix.Tasks.Orkestra.Projection.Rollback.run([@test_projector_str, "--all"])
+
+        # The table should be gone after rollback — any query against it raises
+        assert_raise Postgrex.Error, fn ->
+          ProjectionRepo.all(from(r in "task_test_read_model", select: r.id))
+        end
+      end
+    end
+
+    describe "Mix.Tasks.Orkestra.Projection.Drop" do
+      test "raises Mix.Error when no module name provided" do
+        assert_raise Mix.Error, fn ->
+          Mix.Tasks.Orkestra.Projection.Drop.run([])
+        end
+      end
+
+      test "drop rolls back migrations and deletes checkpoint row" do
+        # Insert a checkpoint row to verify drop cleans it up
+        ProjectionRepo.insert!(%Checkpoint{
+          projector_name: @test_projector_name,
+          last_position: 42,
+          halted: false
+        })
+
+        # Migrate first so there is something to drop
+        Mix.Tasks.Orkestra.Projection.Migrate.run([@test_projector_str])
+
+        # Drop removes migrations AND the checkpoint row
+        Mix.Tasks.Orkestra.Projection.Drop.run([@test_projector_str])
+
+        # Checkpoint row must be gone
+        assert ProjectionRepo.get_by(Checkpoint, projector_name: @test_projector_name) == nil
+      end
+    end
+
+    describe "Mix.Tasks.Orkestra.Projection.Rebuild" do
+      test "raises Mix.Error when no module name provided" do
+        assert_raise Mix.Error, fn ->
+          Mix.Tasks.Orkestra.Projection.Rebuild.run([])
+        end
+      end
+
+      test "raises Mix.Error with clear message when projector not found under supervisor" do
+        # Run app.config only (not app.start) — no real supervisor running.
+        # Rebuild with --yes skips the confirmation prompt.
+        # This should fail with a clear error because the test projector is not
+        # registered under any running Orkestra.Projection.Supervisor.
+        assert_raise Mix.Error, ~r/not found under/, fn ->
+          Mix.Tasks.Orkestra.Projection.Rebuild.run([
+            @test_projector_str,
+            "--yes"
+          ])
+        end
+      end
+    end
+
+    describe "all four tasks have @shortdoc" do
+      test "migrate has shortdoc" do
+        assert Mix.Task.shortdoc(Mix.Tasks.Orkestra.Projection.Migrate) =~ "migration"
+      end
+
+      test "rollback has shortdoc" do
+        assert Mix.Task.shortdoc(Mix.Tasks.Orkestra.Projection.Rollback) =~ "oll"
+      end
+
+      test "drop has shortdoc" do
+        assert Mix.Task.shortdoc(Mix.Tasks.Orkestra.Projection.Drop) =~ "rop"
+      end
+
+      test "rebuild has shortdoc" do
+        assert Mix.Task.shortdoc(Mix.Tasks.Orkestra.Projection.Rebuild) =~ "ebuild"
+      end
+    end
+  end
+end

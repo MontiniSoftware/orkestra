@@ -12,6 +12,9 @@ defmodule OrkestraMcp.Server do
   component(OrkestraMcp.Tools.GenCommandHandler)
   component(OrkestraMcp.Tools.GenEventHandler)
   component(OrkestraMcp.Tools.GenAggregate)
+  component(OrkestraMcp.Tools.GenProjection)
+  component(OrkestraMcp.Tools.GenReadModel)
+  component(OrkestraMcp.Tools.GenQueries)
 
   # Resources
   component(OrkestraMcp.Resources.ListCommands)
@@ -19,6 +22,7 @@ defmodule OrkestraMcp.Server do
   component(OrkestraMcp.Resources.ListHandlers)
   component(OrkestraMcp.Resources.ListAggregates)
   component(OrkestraMcp.Resources.DomainMap)
+  component(OrkestraMcp.Resources.ListProjections)
 
   # Prompts
   component(OrkestraMcp.Prompts.Conventions)

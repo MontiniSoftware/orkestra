@@ -79,6 +79,16 @@ defmodule OrkestraMcp.IntrospectionTest do
       assert aggregate
     end
 
+    test "discovers projectors" do
+      %{projectors: projectors} = Introspection.discover(@fixture_dir)
+
+      projector = Enum.find(projectors, &(&1.module == "MyApp.Orders.Projectors.OrderProjector"))
+      assert projector
+      assert projector.repo == "MyApp.OrderProjection.Repo"
+      assert "MyApp.Orders.Events.OrderPlaced" in projector.events
+      assert "MyApp.Orders.Events.OrderCancelled" in projector.events
+    end
+
     test "returns empty lists for project with no Orkestra modules" do
       result = Introspection.discover("/tmp/empty_project_#{:rand.uniform(100_000)}")
 
@@ -87,6 +97,7 @@ defmodule OrkestraMcp.IntrospectionTest do
       assert result.command_handlers == []
       assert result.event_handlers == []
       assert result.aggregates == []
+      assert result.projectors == []
     end
   end
 
@@ -99,6 +110,13 @@ defmodule OrkestraMcp.IntrospectionTest do
       assert map =~ "MyApp.Orders.Events.OrderPlaced (event)"
       assert map =~ "-> MyApp.Orders.Handlers.SendConfirmation (event_handler)"
       assert map =~ "MyApp.Orders.OrderAggregate (aggregate)"
+    end
+
+    test "includes projectors in domain map" do
+      map = Introspection.build_domain_map(@fixture_dir)
+
+      assert map =~ "MyApp.Orders.Projectors.OrderProjector (projector)"
+      assert map =~ "MyApp.Orders.Events.OrderPlaced (projected_event)"
     end
   end
 end

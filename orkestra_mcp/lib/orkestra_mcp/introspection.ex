@@ -5,7 +5,7 @@ defmodule OrkestraMcp.Introspection do
   Discovers all Orkestra components in the given project directory.
 
   Returns a map with keys: `:commands`, `:events`, `:command_handlers`,
-  `:event_handlers`, `:aggregates`.
+  `:event_handlers`, `:aggregates`, `:projectors`.
   """
   def discover(project_dir) do
     lib_dir = Path.join(project_dir, "lib")
@@ -22,7 +22,8 @@ defmodule OrkestraMcp.Introspection do
       events: [],
       command_handlers: [],
       event_handlers: [],
-      aggregates: []
+      aggregates: [],
+      projectors: []
     }
 
     Enum.reduce(files, results, fn file, acc ->
@@ -40,6 +41,7 @@ defmodule OrkestraMcp.Introspection do
     |> detect_command_handlers(content)
     |> detect_event_handlers(content)
     |> detect_aggregates(content)
+    |> detect_projectors(content)
   end
 
   defp detect_commands(acc, content) do
@@ -120,6 +122,29 @@ defmodule OrkestraMcp.Introspection do
     end
   end
 
+  defp detect_projectors(acc, content) do
+    case Regex.run(~r/use\s+Orkestra\.Projector,\s*repo:\s*([\w.]+)/, content) do
+      [_, repo_module] ->
+        case extract_module_name(content) do
+          nil ->
+            acc
+
+          module_name ->
+            events = extract_projected_events(content)
+            entry = %{module: module_name, repo: repo_module, events: events}
+            %{acc | projectors: acc.projectors ++ [entry]}
+        end
+
+      nil ->
+        acc
+    end
+  end
+
+  defp extract_projected_events(content) do
+    Regex.scan(~r/project\s+([\w.]+),/, content)
+    |> Enum.map(fn [_, event_module] -> event_module end)
+  end
+
   defp extract_module_name(content) do
     case Regex.run(~r/defmodule\s+([\w.]+)/, content) do
       [_, name] -> name
@@ -181,7 +206,8 @@ defmodule OrkestraMcp.Introspection do
       events: events,
       command_handlers: command_handlers,
       event_handlers: event_handlers,
-      aggregates: aggregates
+      aggregates: aggregates,
+      projectors: projectors
     } = discover(project_dir)
 
     lines = []
@@ -221,6 +247,14 @@ defmodule OrkestraMcp.Introspection do
       lines ++
         Enum.map(aggregates, fn agg ->
           "#{agg.module} (aggregate)"
+        end)
+
+    lines =
+      lines ++
+        Enum.flat_map(projectors, fn proj ->
+          header = "#{proj.module} (projector)"
+          event_lines = Enum.map(proj.events, fn evt -> "  -> #{evt} (projected_event)" end)
+          [header | event_lines] ++ [""]
         end)
 
     Enum.join(lines, "\n")

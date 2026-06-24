@@ -36,8 +36,14 @@ if Code.ensure_loaded?(Ecto.Migration) do
 
     use Ecto.Migration
 
+    # Note: `Ecto.Migration.create/2`/`drop/1` return migration instruction terms,
+    # not `:ok` (the migrator ignores the return value), so these specs are
+    # `term()` rather than `:: :ok` (IN-03). Also note `last_position` is declared
+    # `:bigint` here while the `Checkpoint` schema field is `:integer` — this is the
+    # correct Ecto mapping (`:bigint` is a column type, not an Ecto field type), so
+    # do not "fix" the schema field to `:bigint`.
     @doc "Creates the `projection_checkpoints` and `projection_dead_letters` tables."
-    @spec up() :: :ok
+    @spec up() :: term()
     def up do
       create table(:projection_checkpoints, primary_key: false) do
         add(:id, :binary_id, primary_key: true)
@@ -65,7 +71,7 @@ if Code.ensure_loaded?(Ecto.Migration) do
     end
 
     @doc "Drops the `projection_dead_letters` and `projection_checkpoints` tables."
-    @spec down() :: :ok
+    @spec down() :: term()
     def down do
       drop(table(:projection_dead_letters))
       drop(table(:projection_checkpoints))

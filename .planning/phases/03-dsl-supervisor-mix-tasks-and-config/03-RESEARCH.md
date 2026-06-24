@@ -603,17 +603,14 @@ end
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **`__dispatch__/3` vs `__dispatch__/2` arity**
+1. **`__dispatch__/3` vs `__dispatch__/2` arity** — RESOLVED
    - What we know: `Storage.Postgres.write/4` calls `handler.(projector_name, event, position)` — 3-arity
-   - What's unclear: Should `__dispatch__` take `(projector_name, event, position)` or just `(event, position)`? The user-facing `project` fn takes `fn event, multi -> ... end` (2-arity) which doesn't map cleanly to 3-arity dispatch.
-   - Recommendation: Adapter `handler` fn should be `fn name, event, position -> __MODULE__.__dispatch__(event.type, event, position) end` — a wrapper lambda that extracts the type. The user-facing `project` fn takes `fn event, position -> ... end` (2-arity), and `__dispatch__` wraps the type lookup. This keeps the user API clean.
+   - Resolution: The adapter `handler` is a 3-arity wrapper: `fn _name, event, position -> __MODULE__.__dispatch__(event.type, event, position) end`. The generated `__dispatch__/3` takes `(event_type_string, event, position)` and dispatches to the user's 2-arity fn. Unmatched types return `{:ok, Ecto.Multi.new()}` (skip). The `projector_name` arg is ignored in the dispatch (it's only used by the adapter for checkpoint writes).
 
-2. **`project` handler function signature: `fn event, multi -> ...` vs `fn event, position -> ...`**
-   - What we know: CONTEXT.md D-01 specifies `project EventType, fn event, multi -> ... end`. The Phase 2 `Postgres.write/4` handler is `fn name, event, position -> {:ok, Ecto.Multi.t()} end`.
-   - What's unclear: The `multi` in the DSL context doc suggests the handler receives a partially-built Multi. But per Phase 2 design, the handler is supposed to return an `Ecto.Multi` (not receive one). This looks like a notation inconsistency in the discussion doc.
-   - Recommendation: Treat `fn event, multi -> ...` as the user-facing notation where `multi` is conceptually the Ecto.Multi the developer should build and return. The actual signature is `fn event, position -> {:ok, Ecto.Multi.t()} | {:error, term()}`. The `multi` naming in the context doc was shorthand for "the multi fragment you return." Confirm with planner.
+2. **`project` handler function signature: `fn event, multi -> ...` vs `fn event, position -> ...`** — RESOLVED
+   - Resolution: The user-facing `project` macro keeps the D-01 syntax: `project EventType, fn event, multi -> multi |> Ecto.Multi.insert(...) end`. The `multi` parameter is a pre-built empty `Ecto.Multi.new()` that the user chains operations onto and returns. The DSL wraps this internally: `user_fn.(event, Ecto.Multi.new())` returns the completed Multi, which the `__dispatch__/3` wrapper returns as `{:ok, result_multi}`. This preserves the CONTEXT.md D-01 syntax exactly while bridging to the Postgres adapter's expected `{:ok, Ecto.Multi.t()}` return type. The `position` is available via `event.global_position` if the user needs it.
 
 ---
 

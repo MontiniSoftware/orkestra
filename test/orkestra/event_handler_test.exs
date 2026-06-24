@@ -8,13 +8,13 @@ defmodule Orkestra.EventHandlerTest do
 
   defmodule TaskCompleted do
     use Orkestra.Event
-    field :task_id, :string, required: true
+    field(:task_id, :string, required: true)
   end
 
   defmodule TaskFailed do
     use Orkestra.Event
-    field :task_id, :string, required: true
-    field :reason, :string, required: true
+    field(:task_id, :string, required: true)
+    field(:reason, :string, required: true)
   end
 
   # ── Test handlers ───────────────────────────────────────────────

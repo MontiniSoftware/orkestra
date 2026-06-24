@@ -171,22 +171,26 @@ defmodule Orkestra.MessageBus.PubSub do
         :ok
 
       {:error, reason} when attempt < max_retries ->
-        OTel.with_span("orkestra.retry", %{
-          "orkestra.retry.attempt" => attempt + 1,
-          "orkestra.retry.max" => max_retries,
-          "orkestra.retry.handler" => inspect(handler),
-          "orkestra.retry.reason" => inspect(reason)
-        }, fn ->
-          Logger.warning("Handler failed, retrying",
-            handler: inspect(handler),
-            attempt: attempt + 1,
-            max_retries: max_retries,
-            reason: inspect(reason),
-            orkestra: :pubsub
-          )
+        OTel.with_span(
+          "orkestra.retry",
+          %{
+            "orkestra.retry.attempt" => attempt + 1,
+            "orkestra.retry.max" => max_retries,
+            "orkestra.retry.handler" => inspect(handler),
+            "orkestra.retry.reason" => inspect(reason)
+          },
+          fn ->
+            Logger.warning("Handler failed, retrying",
+              handler: inspect(handler),
+              attempt: attempt + 1,
+              max_retries: max_retries,
+              reason: inspect(reason),
+              orkestra: :pubsub
+            )
 
-          attempt_with_retry(handler, envelope, max_retries, attempt + 1)
-        end)
+            attempt_with_retry(handler, envelope, max_retries, attempt + 1)
+          end
+        )
 
       {:error, reason} ->
         Logger.error("Handler exhausted retries, sending to dead letter",

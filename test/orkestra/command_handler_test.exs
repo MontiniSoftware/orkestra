@@ -8,7 +8,7 @@ defmodule Orkestra.CommandHandlerTest do
 
   defmodule CreateTask do
     use Orkestra.Command
-    param :name, :string, required: true
+    param(:name, :string, required: true)
   end
 
   # ── Test handlers ───────────────────────────────────────────────

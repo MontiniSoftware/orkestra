@@ -133,7 +133,6 @@ defmodule Orkestra.MessageBus.RabbitMQ do
 
     case setup_consumer(@commands_exchange, queue, topic, handler) do
       {:ok, consumer} ->
-
         {:reply, :ok, %{state | consumers: [consumer | state.consumers]}}
 
       {:error, _} = err ->
@@ -437,7 +436,9 @@ defmodule Orkestra.MessageBus.RabbitMQ do
   defp envelope_id(%CommandEnvelope{command: cmd}), do: cmd.id
   defp envelope_id(%EventEnvelope{event: event}), do: event.id
 
-  defp envelope_correlation_id(%CommandEnvelope{command: %{metadata: %{correlation_id: id}}}), do: id
+  defp envelope_correlation_id(%CommandEnvelope{command: %{metadata: %{correlation_id: id}}}),
+    do: id
+
   defp envelope_correlation_id(%EventEnvelope{event: %{metadata: %{correlation_id: id}}}), do: id
   defp envelope_correlation_id(_), do: ""
 

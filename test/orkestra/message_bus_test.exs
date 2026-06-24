@@ -22,7 +22,12 @@ defmodule Orkestra.MessageBusTest do
   describe "topic_for/1 with app_prefix" do
     setup do
       original = Application.get_env(:orkestra, Orkestra.MessageBus, [])
-      Application.put_env(:orkestra, Orkestra.MessageBus, Keyword.put(original, :app_prefix, MyApp))
+
+      Application.put_env(
+        :orkestra,
+        Orkestra.MessageBus,
+        Keyword.put(original, :app_prefix, MyApp)
+      )
 
       on_exit(fn ->
         Application.put_env(:orkestra, Orkestra.MessageBus, original)

@@ -77,10 +77,17 @@ defmodule Orkestra.EventHandler do
 
     topics =
       cond do
-        topic -> [topic]
-        event -> [quote(do: Orkestra.MessageBus.topic_for(unquote(event)))]
-        events != [] -> Enum.map(events, fn e -> quote(do: Orkestra.MessageBus.topic_for(unquote(e))) end)
-        true -> raise ArgumentError, "EventHandler requires :event, :events, or :topic option"
+        topic ->
+          [topic]
+
+        event ->
+          [quote(do: Orkestra.MessageBus.topic_for(unquote(event)))]
+
+        events != [] ->
+          Enum.map(events, fn e -> quote(do: Orkestra.MessageBus.topic_for(unquote(e))) end)
+
+        true ->
+          raise ArgumentError, "EventHandler requires :event, :events, or :topic option"
       end
 
     quote do

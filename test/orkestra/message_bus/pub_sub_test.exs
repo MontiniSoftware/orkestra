@@ -8,12 +8,12 @@ defmodule Orkestra.MessageBus.PubSubTest do
 
   defmodule DoSomething do
     use Orkestra.Command
-    param :value, :string, required: true
+    param(:value, :string, required: true)
   end
 
   defmodule SomethingHappened do
     use Orkestra.Event
-    field :value, :string, required: true
+    field(:value, :string, required: true)
   end
 
   # ── Test handlers ───────────────────────────────────────────────

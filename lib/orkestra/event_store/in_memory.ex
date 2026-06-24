@@ -10,7 +10,10 @@ defmodule Orkestra.EventStore.InMemory do
   - `:streams` — map of `stream_id => [stored_event()]` for per-stream events
   - `:global_counter` — non-negative integer; incremented on each appended event
     to assign gap-free monotonic `:global_position` values (D-01)
-  - `:subscribers` — list of subscriber pids registered via `subscribe_from_position/3`
+  - `:subscribers` — list of `{ref, pid, stream_or_all}` tuples registered via
+    `subscribe_from_position/3`. The `stream_or_all` is the subscribed stream id
+    (or `:all`) and is used to filter live delivery; `ref` is the handle returned
+    to the caller and accepted by `unsubscribe/1`.
   - `:global_events` — list of all events in global-append order, each extended
     with `:global_position`
 
@@ -23,8 +26,10 @@ defmodule Orkestra.EventStore.InMemory do
      (RESEARCH.md Pitfall 3).
   2. Replays snapshotted events with `global_position > from_position` (exclusive,
      matching Spear's `from:` semantics — Pitfall 1).
-  3. On each subsequent `append_events/3`, pushes new events to all registered
-     subscribers in order.
+  3. On each subsequent `append_events/3`, pushes new events to each registered
+     subscriber in order, filtered by the subscriber's subscribed stream
+     (`:all` subscribers receive every event; a per-stream subscriber receives
+     only events stamped with its `stream_id`).
 
   This push model mirrors EventStoreDB's subscription model so the Phase 2
   Projector GenServer can code against a single delivery interface.
@@ -136,11 +141,13 @@ defmodule Orkestra.EventStore.InMemory do
   after `from_position` (exclusive).
 
   Atomically registers the subscriber and snapshots existing events inside a
-  single `Agent.get_and_update`, then replays the snapshot to the subscriber.
-  Subsequent calls to `append_events/3` push new events to all registered
-  subscribers in order.
+  single `Agent.get_and_update`, then replays the snapshot to the subscriber
+  (filtered to `stream_id_or_all`). Subsequent calls to `append_events/3` push
+  new events to all registered subscribers in order, filtered by each
+  subscriber's subscribed stream.
 
-  Returns `{:ok, subscription_ref}`.
+  Returns `{:ok, subscription_ref}`. The returned ref is a real handle: pass it
+  to `unsubscribe/1` to stop delivery and remove the subscriber from state.
   """
   @spec subscribe_from_position(Orkestra.EventStore.stream_id() | :all, integer(), pid()) ::
           {:ok, reference()} | {:error, term()}
@@ -156,7 +163,12 @@ defmodule Orkestra.EventStore.InMemory do
     snapshot =
       Agent.get_and_update(__MODULE__, fn state ->
         snapshot = state.global_events
-        new_state = %{state | subscribers: [subscriber | state.subscribers]}
+
+        new_state = %{
+          state
+          | subscribers: [{ref, subscriber, stream_id_or_all} | state.subscribers]
+        }
+
         {snapshot, new_state}
       end)
 
@@ -177,11 +189,33 @@ defmodule Orkestra.EventStore.InMemory do
     {:ok, ref}
   end
 
+  @doc """
+  Removes the subscription identified by `ref` so the subscriber stops
+  receiving live events.
+
+  Returns `:ok` whether or not a matching subscription existed (idempotent).
+  """
+  @spec unsubscribe(reference()) :: :ok
+  def unsubscribe(ref) do
+    Agent.update(__MODULE__, fn state ->
+      %{
+        state
+        | subscribers: Enum.reject(state.subscribers, fn {r, _pid, _stream} -> r == ref end)
+      }
+    end)
+  end
+
   # ── Private ─────────────────────────────────────────────────────
 
   defp do_append(state, stream_id, current_events, new_events) do
     base_revision = length(current_events)
     base_position = state.global_counter
+
+    # Revision integrity is load-bearing for concurrency correctness. Assert the
+    # invariant that the gap-free global counter equals the number of recorded
+    # global events; any divergence indicates a bug in append bookkeeping and is
+    # surfaced loudly here rather than silently corrupting ordering (WR-03).
+    ^base_position = length(state.global_events)
 
     # Stamp each new event with stream_revision and global_position.
     # global_position is gap-free across all streams (D-01).
@@ -190,6 +224,7 @@ defmodule Orkestra.EventStore.InMemory do
       |> Enum.with_index(0)
       |> Enum.map(fn {event, idx} ->
         event
+        |> Map.put(:stream_id, stream_id)
         |> Map.put(:stream_revision, base_revision + idx)
         |> Map.put(:global_position, base_position + idx)
       end)
@@ -206,11 +241,16 @@ defmodule Orkestra.EventStore.InMemory do
         global_events: new_global_events
     }
 
-    # Push each newly-appended event to all registered subscribers in order.
-    # This happens inside the Agent.get_and_update so the state update and push
-    # are serialized — no concurrent append can interleave deliveries (Pitfall 3).
-    Enum.each(state.subscribers, fn subscriber_pid ->
-      Enum.each(stamped, fn e -> send(subscriber_pid, e) end)
+    # Push each newly-appended event to all registered subscribers in order,
+    # filtered by each subscriber's subscribed stream (CR-05). A `:stream_id`
+    # subscriber receives only events for its stream; an `:all` subscriber
+    # receives everything. This happens inside the Agent.get_and_update so the
+    # state update and push are serialized — no concurrent append can interleave
+    # deliveries (Pitfall 3).
+    Enum.each(state.subscribers, fn {_ref, subscriber_pid, sub_stream} ->
+      stamped
+      |> filter_for_stream(sub_stream)
+      |> Enum.each(fn e -> send(subscriber_pid, e) end)
     end)
 
     {{:ok, new_revision}, new_state}

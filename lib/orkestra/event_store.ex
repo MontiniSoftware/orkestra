@@ -24,6 +24,24 @@ defmodule Orkestra.EventStore do
           stream_revision: non_neg_integer()
         }
 
+  @typedoc """
+  A `stored_event()` extended with a `:global_position` key, delivered to
+  subscribers of `subscribe_from_position/3`.
+
+  The `:global_position` is a non-negative monotonic integer (D-01):
+  - InMemory adapter: gap-free counter starting at 0 across all streams.
+  - EventStoreDB adapter: `commit_position` from the `$all` stream (monotonic,
+    but not necessarily gap-free).
+  """
+  @type stored_event_with_position :: %{
+          id: String.t(),
+          type: String.t(),
+          data: map(),
+          metadata: map(),
+          stream_revision: non_neg_integer(),
+          global_position: non_neg_integer()
+        }
+
   @doc "Loads all events from a stream. Returns `{:ok, events, current_revision}` or `{:error, reason}`."
   @callback load_events(stream_id()) ::
               {:ok, [stored_event()], revision()} | {:error, term()}
@@ -38,6 +56,28 @@ defmodule Orkestra.EventStore do
   """
   @callback append_events(stream_id(), events :: [stored_event()], expected_revision()) ::
               {:ok, revision()} | {:error, :wrong_expected_version} | {:error, term()}
+
+  @doc """
+  Asynchronously subscribes `subscriber` to receive events starting after
+  `from_position` (exclusive). Use `:all` as `stream_id` to subscribe across
+  all streams.
+
+  Pushes messages of type `stored_event_with_position()` to `subscriber` — a
+  `stored_event()` map extended with a `:global_position` key (D-01).
+
+  Position semantics are **exclusive**: `from_position: N` delivers events with
+  `global_position > N`. This matches Spear's `from:` semantics for
+  EventStoreDB subscriptions. Starting from `-1` replays all events from the
+  beginning.
+
+  Returns `{:ok, subscription_ref}` on success, or `{:error, reason}` on
+  failure.
+  """
+  @callback subscribe_from_position(
+              stream_id :: stream_id() | :all,
+              from_position :: integer(),
+              subscriber :: pid()
+            ) :: {:ok, reference()} | {:error, term()}
 
   @doc "Returns the configured EventStore adapter."
   @spec impl() :: module()

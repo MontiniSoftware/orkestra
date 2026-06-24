@@ -2,15 +2,15 @@
 
 Lightweight CQRS/ES toolkit for Elixir. Pluggable message bus, event store, and OpenTelemetry tracing.
 
-Version: 0.1.0 | Elixir: ~> 1.15 | License: MIT
+Version: 0.1.0 | Elixir: ~> 1.18 | License: MIT
 
 ---
 
 ## File Map
 
 ```
+lib/orkestra.ex                      # Namespace module (docs only)
 lib/orkestra/
-├── orkestra.ex                      # Namespace module (docs only)
 ├── command.ex                       # Command macro + behaviour (DSL: `param`)
 ├── event.ex                         # Event macro + behaviour (DSL: `field`)
 ├── metadata.ex                      # Metadata struct (correlation/causation chain)
@@ -139,7 +139,6 @@ Lightweight context propagated through the entire pipeline.
 - Status: `:pending → :published → :handled | :partially_handled | :failed`
 - Per-handler tracking: `handlers` map with statuses `:pending → :processing → :succeeded | :failed | :skipped`
 - `register_handler/2`, `mark_handler_succeeded/2`, `mark_handler_failed/2`
-- `recalculate_status/1` — updates envelope status based on handler states
 
 ### 5. Handlers
 

@@ -1,3 +1,4 @@
+<!-- generated-by: gsd-doc-writer -->
 # Orkestra
 
 A lightweight CQRS/ES toolkit for Elixir. Pluggable message bus, event store, and OpenTelemetry tracing built in.
@@ -236,6 +237,41 @@ env = EventEnvelope.mark_handler_failed(env, "UpdateIndex")
 env.status  # :partially_handled
 ```
 
+### Aggregates
+
+Aggregates encapsulate domain invariants as pure functions. `Aggregate.Root` is the imperative shell that handles all I/O.
+
+```elixir
+defmodule MyApp.BankAccount do
+  @behaviour Orkestra.Aggregate
+
+  @impl true
+  def init_state, do: %{status: :new, balance: 0}
+
+  @impl true
+  def stream_id(command), do: "bank_account-#{command.params.account_id}"
+
+  @impl true
+  def evolve(state, %AccountOpened{} = e), do: %{state | status: :open, owner: e.data.owner}
+  def evolve(state, %MoneyDeposited{} = e), do: %{state | balance: state.balance + e.data.amount}
+  def evolve(state, _), do: state
+
+  @impl true
+  def decide(%{status: :new}, %OpenAccount{} = cmd) do
+    {:ok, [AccountOpened.new!(%{account_id: cmd.params.account_id, owner: cmd.params.owner})]}
+  end
+  def decide(%{status: :open}, %Deposit{} = cmd) do
+    {:ok, [MoneyDeposited.new!(%{amount: cmd.params.amount})]}
+  end
+  def decide(%{status: :new}, _), do: {:error, :account_not_opened}
+end
+
+# Execute via the imperative shell
+{:ok, events, new_state} = Orkestra.Aggregate.Root.execute(MyApp.BankAccount, open_cmd)
+```
+
+The `Root.execute/3` pipeline: load events from store → fold via `evolve/2` → call `decide/2` → append events → publish to bus → snapshot (if configured). Optimistic concurrency is handled automatically with retries on version conflicts.
+
 ### Event handlers
 
 Subscribe to one event, multiple events, or wildcard patterns:
@@ -291,6 +327,8 @@ orkestra.command.dispatch       (message bus)
 
 Additional spans: `orkestra.retry`, `orkestra.rabbitmq.publish` (kind: producer), `orkestra.rabbitmq.consume` (kind: consumer).
 
+Aggregate spans: `orkestra.aggregate.execute` → `orkestra.aggregate.load` → `orkestra.aggregate.fold` → `orkestra.aggregate.decide` → `orkestra.aggregate.append` → `orkestra.aggregate.publish` → `orkestra.aggregate.snapshot`.
+
 ### Span attributes
 
 All spans include: `orkestra.command.type`, `orkestra.command.id`, `orkestra.correlation_id`, `orkestra.causation_id`, `orkestra.actor_id`, `orkestra.handler`.
@@ -311,7 +349,76 @@ Logger metadata set during handler execution: `correlation_id`, `causation_id`, 
 
 Trace context is injected into AMQP message headers on publish and extracted on consume, creating linked spans across nodes. Uses `OpentelemetryProcessPropagator` for context propagation across BEAM processes.
 
+## MCP server (orkestra_mcp)
+
+`orkestra_mcp` is a companion MCP server and CLI that scaffolds and introspects Orkestra projects. It exposes tools, resources, and prompts to any MCP-compatible AI assistant.
+
+### Installation
+
+Build the escript from the `orkestra_mcp/` directory:
+
+```bash
+cd orkestra_mcp
+mix deps.get
+mix escript.build
+```
+
+### Usage
+
+Run the server, pointing it at your project:
+
+```bash
+./orkestra_mcp --project-dir /path/to/your/app
+```
+
+Register it in your MCP client configuration (e.g., `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "orkestra": {
+      "command": "/path/to/orkestra_mcp",
+      "args": ["--project-dir", "/path/to/your/app"]
+    }
+  }
+}
+```
+
+### Tools (code generators)
+
+| Tool | Description |
+|------|-------------|
+| `gen_command` | Scaffold a Command module with typed params |
+| `gen_event` | Scaffold an Event module with typed fields |
+| `gen_command_handler` | Scaffold a CommandHandler wired to a command |
+| `gen_event_handler` | Scaffold an EventHandler (single, multi, or wildcard) |
+| `gen_aggregate` | Scaffold an Aggregate with `decide`/`evolve` clauses |
+
+### Resources (project introspection)
+
+| Resource URI | Description |
+|--------------|-------------|
+| `orkestra://commands` | JSON list of all Command modules discovered in the project |
+| `orkestra://events` | JSON list of all Event modules discovered in the project |
+| `orkestra://handlers` | JSON list of all handler modules discovered in the project |
+| `orkestra://aggregates` | JSON list of all Aggregate modules discovered in the project |
+| `orkestra://domain-map` | Cross-referenced domain map of commands, events, handlers, and aggregates |
+
+### Prompts
+
+| Prompt | Description |
+|--------|-------------|
+| `conventions` | Orkestra CQRS/ES conventions and best practices |
+| `new_bounded_context` | Guided step-by-step workflow for adding a new bounded context |
+
+## Testing
+
+```bash
+mix test
+```
+
+Tests use ExUnit with `async: false` for bus-related tests (shared GenServer state). The in-memory PubSub and event store adapters are used throughout the test suite — no external services required.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

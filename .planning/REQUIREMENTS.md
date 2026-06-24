@@ -37,7 +37,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 ### Error Handling
 
 - [x] **ERR-01**: On a projection error, the event is retried with backoff (reusing orkestra's existing retry semantics), configurable per projector
-- [ ] **ERR-02**: When retries are exhausted, the failing event is parked to a dead-letter store (projector, position, event, error, attempts, timestamp)
+- [x] **ERR-02**: When retries are exhausted, the failing event is parked to a dead-letter store (projector, position, event, error, attempts, timestamp)
 - [x] **ERR-03**: After parking, the projector halts rather than skipping ahead, preserving read-model integrity and requiring operator action to resume
 - [ ] **ERR-04**: A halted projector's status is persisted and observable (no silent stall)
 
@@ -107,7 +107,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | PROJ-02 | Phase 1 | Complete |
 | STORE-01 | Phase 1 | Complete |
 | ERR-01 | Phase 1 | Complete |
-| ERR-02 | Phase 1 | Pending |
+| ERR-02 | Phase 1 | Complete |
 | ERR-03 | Phase 1 | Complete |
 | PROJ-03 | Phase 2 | Pending |
 | PROJ-04 | Phase 2 | Pending |

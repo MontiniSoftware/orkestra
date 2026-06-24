@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 01
 current_phase_name: Foundations
-status: executing
-stopped_at: Roadmap created, STATE.md initialized, REQUIREMENTS.md traceability updated
-last_updated: "2026-06-24T12:20:49.443Z"
+status: verifying
+stopped_at: Completed 01-03-PLAN.md — Checkpoint, DeadLetter schemas and Migration module created
+last_updated: "2026-06-24T12:38:09.944Z"
 last_activity: 2026-06-24
 last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
-  percent: 0
+  completed_plans: 3
+  percent: 20
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-06-24)
 
 Phase: 01 (Foundations) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-24 — Phase 01 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -57,6 +57,7 @@ Progress: [░░░░░░░░░░] 0%
 *Updated after each plan completion*
 | Phase 01 P01 | 9 | 2 tasks | 4 files |
 | Phase 01-foundations P02 | 13 | 3 tasks | 7 files |
+| Phase 01 P03 | 6 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,9 @@ Recent decisions affecting current work:
 - [Phase ?]: Storage.write/4 returns ops :: term() — adapter-agnostic write descriptor
 - [Phase ?]: subscribe_from_position/3 uses exclusive > from_position semantics matching Spear from: parameter (Pitfall 1)
 - [Phase ?]: InMemory Agent.get_and_update atomically registers subscriber + snapshots history to prevent race/gap (Pitfall 3)
+- [Phase ?]: Checkpoint and DeadLetter full-module defmodule wrapped in Code.ensure_loaded? guard (RESEARCH Pattern 3/4) — not just use directive — so library compiles without ecto
+- [Phase ?]: Oban migration pattern: Orkestra.Projection.Migration.up/0 and down/0 delegated to by consumer wrapper migration — Orkestra owns DDL, consumer controls timing and Repo
+- [Phase ?]: T-01-05 mitigated: event_data field type :map (JSON/jsonb) avoids unsafe atom deserialization unlike :erlang.binary_to_term
 
 ### Pending Todos
 
@@ -93,6 +97,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-24T12:18:09.169Z
-Stopped at: Roadmap created, STATE.md initialized, REQUIREMENTS.md traceability updated
+Last session: 2026-06-24T12:38:09.938Z
+Stopped at: Completed 01-03-PLAN.md — Checkpoint, DeadLetter schemas and Migration module created
 Resume file: None

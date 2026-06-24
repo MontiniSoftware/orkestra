@@ -13,7 +13,7 @@ This milestone adds a complete projection / read-model subsystem to Orkestra. St
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundations** - Checkpoint + DeadLetter schemas, Storage behaviour, Lifecycle pure functions, and EventStore catch-up subscription API
+- [x] **Phase 1: Foundations** - Checkpoint + DeadLetter schemas, Storage behaviour, Lifecycle pure functions, and EventStore catch-up subscription API (completed 2026-06-24)
 - [ ] **Phase 2: Projector GenServer + Ecto Adapter** - Full subscribe→catch-up→live→retry→halt state machine with atomic Ecto checkpoint co-write and per-projection Repo isolation
 - [ ] **Phase 3: DSL, Supervisor, Mix Tasks, and Config** - `use Orkestra.Projector` macro, one_for_one Supervisor, migrate/rollback/drop/rebuild mix tasks, and config cleanup
 - [ ] **Phase 4: Telemetry & Observability** - OTel spans per event, positional lag metric, rebuild progress metric, and halted-projector telemetry
@@ -33,7 +33,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `Orkestra.Projector.Lifecycle` pure functions correctly classify errors, compute retry delays, and decide halt — verifiable via unit tests with no I/O
   4. The `Orkestra.EventStore` behaviour exposes a `subscribe_from_position/3` callback; both InMemory and EventStoreDB adapters implement it, and the InMemory emulation delivers events in order during tests
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 **Wave 1**
 
 - [x] 01-01-PLAN.md — Optional Ecto deps + pure Projector.Lifecycle (retry/backoff/halt) [ERR-01, ERR-03]
@@ -41,7 +41,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-03-PLAN.md — Checkpoint + DeadLetter Ecto schemas + Orkestra-owned migration [ERR-02, ERR-03]
+- [x] 01-03-PLAN.md — Checkpoint + DeadLetter Ecto schemas + Orkestra-owned migration [ERR-02, ERR-03]
 
 ### Phase 2: Projector GenServer + Ecto Adapter
 
@@ -108,7 +108,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundations | 2/3 | In Progress|  |
+| 1. Foundations | 3/3 | Complete   | 2026-06-24 |
 | 2. Projector GenServer + Ecto Adapter | 0/TBD | Not started | - |
 | 3. DSL, Supervisor, Mix Tasks, and Config | 0/TBD | Not started | - |
 | 4. Telemetry & Observability | 0/TBD | Not started | - |

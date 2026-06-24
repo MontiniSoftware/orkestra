@@ -80,8 +80,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. `mix orkestra.projection.rebuild <name>` resets the read model and checkpoint, replays the full event stream from position zero in a single gap-free catch-up pass, and transitions to live
   5. The `:ultimus` config key bug is fixed (→ `:orkestra`); optional Ecto/Postgrex deps are declared following the existing `:amqp`/`:spear` optional-dep pattern; per-projection Repo config is documented
 
-**Plans**: TBD
-**UI hint**: no
+**Plans**: 2 plans
+
+**Wave 1**
+
+- [ ] 03-01-PLAN.md — DSL macro (`use Orkestra.Projector`) + Projection Supervisor + unit tests [PROJ-01, PROJ-05, CFG-01, CFG-02, CFG-03]
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 03-02-PLAN.md — Mix tasks (migrate/rollback/drop/rebuild) + integration tests [MIG-02, MIG-03, MIG-04, RBLD-01, RBLD-02, CFG-01, CFG-03]
 
 ### Phase 4: Telemetry & Observability
 
@@ -119,6 +126,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Foundations | 3/3 | Complete    | 2026-06-24 |
 | 2. Projector GenServer + Ecto Adapter | 3/3 | Complete   | 2026-06-24 |
-| 3. DSL, Supervisor, Mix Tasks, and Config | 0/TBD | Not started | - |
+| 3. DSL, Supervisor, Mix Tasks, and Config | 0/2 | Not started | - |
 | 4. Telemetry & Observability | 0/TBD | Not started | - |
 | 5. MCP Integration and Query Helpers | 0/TBD | Not started | - |

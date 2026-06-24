@@ -8,7 +8,7 @@ defmodule Orkestra.EventStore do
 
   ## Configuration
 
-      config :ultimus, Orkestra.EventStore,
+      config :orkestra, Orkestra.EventStore,
         adapter: Orkestra.EventStore.EventStoreDB
   """
 
@@ -42,11 +42,26 @@ defmodule Orkestra.EventStore do
           global_position: non_neg_integer()
         }
 
-  @doc "Loads all events from a stream. Returns `{:ok, events, current_revision}` or `{:error, reason}`."
+  @doc """
+  Loads all events from a stream. Returns `{:ok, events, current_revision}` or
+  `{:error, reason}`.
+
+  The returned revision is the stream's current head revision. For a genuinely
+  empty (non-existent) stream the returned revision is `-1` and the event list
+  is empty (WR-02).
+  """
   @callback load_events(stream_id()) ::
               {:ok, [stored_event()], revision()} | {:error, term()}
 
-  @doc "Loads events from a stream starting after `from_revision`."
+  @doc """
+  Loads events from a stream starting after `from_revision`.
+
+  The third tuple element is always the stream's **current head revision**,
+  independent of the filter: when `from_revision` is at or beyond the head the
+  event list is empty but the returned revision is still the head revision (not
+  `-1`). The `-1` empty revision is reserved for a genuinely empty stream, as in
+  `load_events/1` (WR-02).
+  """
   @callback load_events(stream_id(), from_revision :: non_neg_integer()) ::
               {:ok, [stored_event()], revision()} | {:error, term()}
 
@@ -82,7 +97,7 @@ defmodule Orkestra.EventStore do
   @doc "Returns the configured EventStore adapter."
   @spec impl() :: module()
   def impl do
-    Application.get_env(:ultimus, __MODULE__, [])
+    Application.get_env(:orkestra, __MODULE__, [])
     |> Keyword.get(:adapter, Orkestra.EventStore.InMemory)
   end
 end

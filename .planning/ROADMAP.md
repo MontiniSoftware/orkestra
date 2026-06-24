@@ -102,7 +102,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. A rebuild progress metric (separate from live lag) is emitted during a rebuild and reflects percentage of total events replayed
   4. A halted projector emits a telemetry event/counter on halt; the halt status flag is persisted so it remains visible after the GenServer has stopped
 
-**Plans**: TBD
+**Plans**: 2 plans
+
+**Wave 1**
+
+- [ ] 04-01-PLAN.md — OTel span wrapping + :telemetry metric events in GenServer + Telemetry helper [TEL-01, TEL-02, TEL-03, TEL-04]
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 04-02-PLAN.md — Telemetry tests for lag, rebuild progress, halt, and retry events [TEL-01, TEL-02, TEL-03, TEL-04]
 
 ### Phase 5: MCP Integration and Query Helpers
 
@@ -127,5 +135,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Foundations | 3/3 | Complete    | 2026-06-24 |
 | 2. Projector GenServer + Ecto Adapter | 3/3 | Complete   | 2026-06-24 |
 | 3. DSL, Supervisor, Mix Tasks, and Config | 0/2 | Not started | - |
-| 4. Telemetry & Observability | 0/TBD | Not started | - |
+| 4. Telemetry & Observability | 0/2 | Not started | - |
 | 5. MCP Integration and Query Helpers | 0/TBD | Not started | - |

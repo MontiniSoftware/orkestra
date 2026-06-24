@@ -104,13 +104,43 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (to be filled by roadmap) | — | Pending |
+| PROJ-02 | Phase 1 | Pending |
+| STORE-01 | Phase 1 | Pending |
+| ERR-01 | Phase 1 | Pending |
+| ERR-02 | Phase 1 | Pending |
+| ERR-03 | Phase 1 | Pending |
+| PROJ-03 | Phase 2 | Pending |
+| PROJ-04 | Phase 2 | Pending |
+| STORE-02 | Phase 2 | Pending |
+| STORE-03 | Phase 2 | Pending |
+| STORE-04 | Phase 2 | Pending |
+| MIG-01 | Phase 2 | Pending |
+| ERR-04 | Phase 2 | Pending |
+| READ-01 | Phase 2 | Pending |
+| PROJ-01 | Phase 3 | Pending |
+| PROJ-05 | Phase 3 | Pending |
+| MIG-02 | Phase 3 | Pending |
+| MIG-03 | Phase 3 | Pending |
+| MIG-04 | Phase 3 | Pending |
+| RBLD-01 | Phase 3 | Pending |
+| RBLD-02 | Phase 3 | Pending |
+| CFG-01 | Phase 3 | Pending |
+| CFG-02 | Phase 3 | Pending |
+| CFG-03 | Phase 3 | Pending |
+| TEL-01 | Phase 4 | Pending |
+| TEL-02 | Phase 4 | Pending |
+| TEL-03 | Phase 4 | Pending |
+| TEL-04 | Phase 4 | Pending |
+| READ-02 | Phase 5 | Pending |
+| MCP-01 | Phase 5 | Pending |
+| MCP-02 | Phase 5 | Pending |
+| MCP-03 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 31 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 31 ⚠️
+- Mapped to phases: 31 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-24*
-*Last updated: 2026-06-24 after initial definition*
+*Last updated: 2026-06-24 after roadmap creation — traceability table populated*

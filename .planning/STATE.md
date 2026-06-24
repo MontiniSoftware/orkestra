@@ -6,14 +6,14 @@ current_phase: 01
 current_phase_name: Foundations
 status: executing
 stopped_at: Roadmap created, STATE.md initialized, REQUIREMENTS.md traceability updated
-last_updated: "2026-06-24T11:49:53.721Z"
+last_updated: "2026-06-24T12:20:49.443Z"
 last_activity: 2026-06-24
 last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-06-24)
 ## Current Position
 
 Phase: 01 (Foundations) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-06-24 — Phase 01 execution started
 
@@ -56,6 +56,7 @@ Progress: [░░░░░░░░░░] 0%
 
 *Updated after each plan completion*
 | Phase 01 P01 | 9 | 2 tasks | 4 files |
+| Phase 01-foundations P02 | 13 | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -69,6 +70,9 @@ Recent decisions affecting current work:
 - Roadmap: Per-projection isolated Ecto.Repo with separate `migration_source` — independent migrate/rollback/drop/rebuild cycles
 - [Phase ?]: No transient/permanent classification in v1
 - [Phase ?]: Fully unit-testable with async: true
+- [Phase ?]: Storage.write/4 returns ops :: term() — adapter-agnostic write descriptor
+- [Phase ?]: subscribe_from_position/3 uses exclusive > from_position semantics matching Spear from: parameter (Pitfall 1)
+- [Phase ?]: InMemory Agent.get_and_update atomically registers subscriber + snapshots history to prevent race/gap (Pitfall 3)
 
 ### Pending Todos
 
@@ -89,6 +93,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-24T11:49:53.714Z
+Last session: 2026-06-24T12:18:09.169Z
 Stopped at: Roadmap created, STATE.md initialized, REQUIREMENTS.md traceability updated
 Resume file: None

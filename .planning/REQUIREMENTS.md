@@ -10,14 +10,14 @@ Requirements for this milestone. Each maps to roadmap phases.
 ### Projector Lifecycle
 
 - [ ] **PROJ-01**: A developer can define a projector via a DSL (`use Orkestra.Projector`) that maps event types to read-model updates
-- [ ] **PROJ-02**: A projector consumes events asynchronously via an EventStore catch-up subscription — replaying from its last checkpoint, then transitioning to live with no gap
+- [x] **PROJ-02**: A projector consumes events asynchronously via an EventStore catch-up subscription — replaying from its last checkpoint, then transitioning to live with no gap
 - [ ] **PROJ-03**: A projector persists its last-processed position and resumes from it after a restart
 - [ ] **PROJ-04**: A projector processes events strictly in order (single consumer per projector, no concurrent application to the same read model)
 - [ ] **PROJ-05**: Projectors are supervised and isolated — one projector halting or crashing does not stop the others
 
 ### Storage Abstraction & PostgreSQL Adapter
 
-- [ ] **STORE-01**: A storage-adapter behaviour defines the contract (write, reset) so backends are pluggable behind a shared lifecycle
+- [x] **STORE-01**: A storage-adapter behaviour defines the contract (write, reset) so backends are pluggable behind a shared lifecycle
 - [ ] **STORE-02**: A PostgreSQL/Ecto storage adapter persists read-model updates
 - [ ] **STORE-03**: The checkpoint update and the read-model write commit atomically in a single Ecto transaction (`Ecto.Multi`)
 - [ ] **STORE-04**: A projection's storage is isolated in its own Ecto.Repo with a dedicated connection pool
@@ -36,9 +36,9 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Error Handling
 
-- [ ] **ERR-01**: On a projection error, the event is retried with backoff (reusing orkestra's existing retry semantics), configurable per projector
+- [x] **ERR-01**: On a projection error, the event is retried with backoff (reusing orkestra's existing retry semantics), configurable per projector
 - [ ] **ERR-02**: When retries are exhausted, the failing event is parked to a dead-letter store (projector, position, event, error, attempts, timestamp)
-- [ ] **ERR-03**: After parking, the projector halts rather than skipping ahead, preserving read-model integrity and requiring operator action to resume
+- [x] **ERR-03**: After parking, the projector halts rather than skipping ahead, preserving read-model integrity and requiring operator action to resume
 - [ ] **ERR-04**: A halted projector's status is persisted and observable (no silent stall)
 
 ### Reads / Queries
@@ -104,11 +104,11 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PROJ-02 | Phase 1 | Pending |
-| STORE-01 | Phase 1 | Pending |
-| ERR-01 | Phase 1 | Pending |
+| PROJ-02 | Phase 1 | Complete |
+| STORE-01 | Phase 1 | Complete |
+| ERR-01 | Phase 1 | Complete |
 | ERR-02 | Phase 1 | Pending |
-| ERR-03 | Phase 1 | Pending |
+| ERR-03 | Phase 1 | Complete |
 | PROJ-03 | Phase 2 | Pending |
 | PROJ-04 | Phase 2 | Pending |
 | STORE-02 | Phase 2 | Pending |
@@ -137,6 +137,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | MCP-03 | Phase 5 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 31 total
 - Mapped to phases: 31 ✓
 - Unmapped: 0

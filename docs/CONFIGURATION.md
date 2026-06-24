@@ -11,7 +11,8 @@ This document covers all configuration options for the `orkestra` library and th
 - [Orkestra Library — mix.exs](#orkestra-library--mixexs)
   - [Core Dependencies](#core-dependencies)
   - [Optional Dependencies](#optional-dependencies)
-- [Adapter Selection](#adapter-selection)
+- [Adapter Selection]
+(#adapter-selection)
   - [EventStore Adapter](#eventstore-adapter)
   - [MessageBus Adapter](#messagebus-adapter)
 - [EventStore Adapter Configuration](#eventstore-adapter-configuration)

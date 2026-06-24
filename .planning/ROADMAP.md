@@ -14,7 +14,7 @@ This milestone adds a complete projection / read-model subsystem to Orkestra. St
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundations** - Checkpoint + DeadLetter schemas, Storage behaviour, Lifecycle pure functions, and EventStore catch-up subscription API (completed 2026-06-24)
-- [ ] **Phase 2: Projector GenServer + Ecto Adapter** - Full subscribe→catch-up→live→retry→halt state machine with atomic Ecto checkpoint co-write and per-projection Repo isolation
+- [x] **Phase 2: Projector GenServer + Ecto Adapter** - Full subscribe→catch-up→live→retry→halt state machine with atomic Ecto checkpoint co-write and per-projection Repo isolation (completed 2026-06-24)
 - [ ] **Phase 3: DSL, Supervisor, Mix Tasks, and Config** - `use Orkestra.Projector` macro, one_for_one Supervisor, migrate/rollback/drop/rebuild mix tasks, and config cleanup
 - [ ] **Phase 4: Telemetry & Observability** - OTel spans per event, positional lag metric, rebuild progress metric, and halted-projector telemetry
 - [ ] **Phase 5: MCP Integration and Query Helpers** - `gen_projection` / `gen_read_model` generators, introspection resources, and optional Queries module
@@ -56,16 +56,16 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. A projector that exhausts retries has its halted status persisted to the checkpoint store, so the halt is visible and not a silent stall
   5. A developer can query a read model directly using Ecto on the per-projection Repo; the Repo uses its own isolated `migration_source` table and `priv/` directory
 
-**Plans**: 3 plans
+**Plans**: 3/3 plans complete
 
 **Wave 1**
 
-- [ ] 02-01-PLAN.md — Postgres test harness: isolated test Repo, example read-model schema + in-code migration, SQL.Sandbox setup [STORE-04, MIG-01]
+- [x] 02-01-PLAN.md — Postgres test harness: isolated test Repo, example read-model schema + in-code migration, SQL.Sandbox setup [STORE-04, MIG-01]
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 02-02-PLAN.md — Postgres/Ecto Storage adapter (write/4 returns Multi fragment, reset/2) + real-DB tests [STORE-02, STORE-04, MIG-01]
-- [ ] 02-03-PLAN.md — Projector GenServer: subscribe-from-checkpoint, sequential apply, atomic Multi commit, send_after retry, atomic park+halt + integration tests [PROJ-03, PROJ-04, STORE-03, ERR-04, READ-01]
+- [x] 02-02-PLAN.md — Postgres/Ecto Storage adapter (write/4 returns Multi fragment, reset/2) + real-DB tests [STORE-02, STORE-04, MIG-01]
+- [x] 02-03-PLAN.md — Projector GenServer: subscribe-from-checkpoint, sequential apply, atomic Multi commit, send_after retry, atomic park+halt + integration tests [PROJ-03, PROJ-04, STORE-03, ERR-04, READ-01]
 
 ### Phase 3: DSL, Supervisor, Mix Tasks, and Config
 
@@ -118,7 +118,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundations | 3/3 | Complete    | 2026-06-24 |
-| 2. Projector GenServer + Ecto Adapter | 0/3 | Not started | - |
+| 2. Projector GenServer + Ecto Adapter | 3/3 | Complete   | 2026-06-24 |
 | 3. DSL, Supervisor, Mix Tasks, and Config | 0/TBD | Not started | - |
 | 4. Telemetry & Observability | 0/TBD | Not started | - |
 | 5. MCP Integration and Query Helpers | 0/TBD | Not started | - |

@@ -141,7 +141,63 @@ defmodule Orkestra.EventStore.EventStoreDB do
     end
   end
 
+  @doc """
+  Subscribes `subscriber` to receive events from `stream_id_or_all` starting
+  after `from_position` (exclusive).
+
+  Delegates to `Spear.subscribe/4` with `from: from_position`. Spear's `from:`
+  parameter is exclusive — it delivers events with position > `from_position`,
+  matching the D-01 monotonic-integer contract and InMemory's semantics.
+
+  The `subscriber` process will receive `Spear.Event.t()` messages. Use
+  `global_position_from_spear_event/1` to extract the `:global_position` integer
+  (mapped from `commit_position`) for checkpoint updates.
+
+  > **Phase 2 note:** The live `$all` exclusive `from:` semantics and the
+  > `commit_position` integer mapping (RESEARCH.md A4/A5 — Open Question 1) are
+  > verified against a live EventStoreDB instance in Phase 2 integration tests.
+  > The Phase 1 test is compile/wiring-level only.
+
+  Returns `{:ok, subscription_ref}` on success or `{:error, exception}` on failure.
+  """
+  @spec subscribe_from_position(
+          Orkestra.EventStore.stream_id() | :all,
+          integer(),
+          pid()
+        ) :: {:ok, reference()} | {:error, term()}
+  @impl true
+  def subscribe_from_position(stream_id_or_all, from_position, subscriber) do
+    Spear.subscribe(@connection, subscriber, stream_id_or_all, from: from_position)
+  rescue
+    e ->
+      Logger.error("EventStoreDB subscribe failed",
+        stream: inspect(stream_id_or_all),
+        from: from_position,
+        error: Exception.message(e),
+        orkestra: :event_store
+      )
+
+      {:error, e}
+  end
+
   # ── Private ─────────────────────────────────────────────────────
+
+  # Extracts the commit_position from a Spear.Event and surfaces it as the
+  # adapter-agnostic :global_position integer (D-01).
+  #
+  # NOTE: `commit_position` is used directly as the monotonic integer per D-01.
+  # For :all stream subscriptions where `prepare_position != commit_position`,
+  # the Spear docs recommend using `Spear.Event.to_checkpoint/1` for idempotent
+  # position tracking. Whether `from: commit_position_integer` works directly
+  # or requires a checkpoint struct for :all subscriptions in all EventStoreDB
+  # versions is verified against a live EventStoreDB in Phase 2 (RESEARCH.md
+  # Open Question 1, Assumptions A4 and A5).
+  defp global_position_from_spear_event(%Spear.Event{metadata: meta}) do
+    case meta do
+      %{commit_position: pos} when is_integer(pos) -> pos
+      _ -> nil
+    end
+  end
 
   defp to_stored_event(%Spear.Event{} = event) do
     %{
@@ -149,7 +205,8 @@ defmodule Orkestra.EventStore.EventStoreDB do
       type: event.type,
       data: event.body,
       metadata: extract_custom_metadata(event),
-      stream_revision: event.metadata.stream_revision
+      stream_revision: event.metadata.stream_revision,
+      global_position: global_position_from_spear_event(event)
     }
   end
 

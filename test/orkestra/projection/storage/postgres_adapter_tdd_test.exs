@@ -27,7 +27,9 @@ if Code.ensure_loaded?(Ecto.Multi) do
           {:ok, multi}
         end
 
-        assert {:ok, multi} = Postgres.write("my_projector", %{type: "SomeEvent"}, 0, handler: handler)
+        assert {:ok, multi} =
+                 Postgres.write("my_projector", %{type: "SomeEvent"}, 0, handler: handler)
+
         assert is_struct(multi, Ecto.Multi)
       end
 
@@ -44,7 +46,10 @@ if Code.ensure_loaded?(Ecto.Multi) do
 
         {:ok, multi} = Postgres.write("my_projector", %{type: "SomeEvent"}, 0, handler: handler)
         names = Ecto.Multi.to_list(multi) |> Enum.map(&elem(&1, 0))
-        assert Enum.all?(names, fn name -> String.starts_with?(Atom.to_string(name), "read_model_") end)
+
+        assert Enum.all?(names, fn name ->
+                 String.starts_with?(Atom.to_string(name), "read_model_")
+               end)
       end
 
       test "can be appended to a checkpoint Multi without name clash" do
@@ -56,7 +61,8 @@ if Code.ensure_loaded?(Ecto.Multi) do
           {:ok, multi}
         end
 
-        {:ok, write_multi} = Postgres.write("my_projector", %{type: "SomeEvent"}, 0, handler: handler)
+        {:ok, write_multi} =
+          Postgres.write("my_projector", %{type: "SomeEvent"}, 0, handler: handler)
 
         checkpoint_multi =
           Ecto.Multi.new()
@@ -71,7 +77,8 @@ if Code.ensure_loaded?(Ecto.Multi) do
           {:error, :bad_event}
         end
 
-        assert {:error, :bad_event} = Postgres.write("my_projector", %{type: "SomeEvent"}, 0, handler: handler)
+        assert {:error, :bad_event} =
+                 Postgres.write("my_projector", %{type: "SomeEvent"}, 0, handler: handler)
       end
     end
 

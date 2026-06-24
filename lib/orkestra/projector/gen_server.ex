@@ -50,8 +50,10 @@ defmodule Orkestra.Projector.GenServer do
   use GenServer
 
   require Logger
+  require OpenTelemetry.Tracer, as: Tracer
 
   alias Orkestra.Projector.Lifecycle
+  alias Orkestra.Telemetry, as: OTel
   alias Orkestra.Projection.{Checkpoint, DeadLetter}
 
   @typedoc """
@@ -70,7 +72,10 @@ defmodule Orkestra.Projector.GenServer do
           adapter_opts: keyword(),
           subscription_ref: reference() | nil,
           attempts: non_neg_integer(),
-          halted: boolean()
+          halted: boolean(),
+          last_seen_position: non_neg_integer() | nil,
+          rebuild_total: non_neg_integer() | nil,
+          rebuild_events_replayed: non_neg_integer()
         }
 
   # ---------------------------------------------------------------------------
@@ -111,7 +116,10 @@ defmodule Orkestra.Projector.GenServer do
       adapter_opts: Map.get(config, :adapter_opts, []),
       subscription_ref: nil,
       attempts: 0,
-      halted: false
+      halted: false,
+      last_seen_position: nil,
+      rebuild_total: Map.get(config, :rebuild_total, nil),
+      rebuild_events_replayed: 0
     }
 
     # Defer all Repo calls — enqueue :load_checkpoint so the test can call
@@ -173,14 +181,14 @@ defmodule Orkestra.Projector.GenServer do
       orkestra: :projector
     )
 
-    {:noreply, state}
+    {:noreply, %{state | last_seen_position: position}}
   end
 
   # Normal event processing
   @doc false
   @impl GenServer
   def handle_info(%{global_position: _} = event, state) do
-    apply_event(event, state)
+    apply_event(event, %{state | last_seen_position: event.global_position})
   end
 
   # Retry: re-attempt the same event after a scheduled delay
@@ -219,58 +227,97 @@ defmodule Orkestra.Projector.GenServer do
 
     position = event.global_position
 
-    case storage_adapter.write(projector_name, event, position, adapter_opts) do
-      {:ok, read_model_multi} ->
-        now = DateTime.utc_now()
+    Tracer.with_span "orkestra.projector.apply_event",
+      attributes: OTel.projector_span_attrs(projector_name, event, position) do
+      case storage_adapter.write(projector_name, event, position, adapter_opts) do
+        {:ok, read_model_multi} ->
+          now = DateTime.utc_now()
 
-        checkpoint = %Checkpoint{
-          projector_name: projector_name,
-          last_position: position,
-          halted: false,
-          updated_at: now
-        }
+          checkpoint = %Checkpoint{
+            projector_name: projector_name,
+            last_position: position,
+            halted: false,
+            updated_at: now
+          }
 
-        checkpoint_multi =
-          Ecto.Multi.new()
-          |> Ecto.Multi.insert(:checkpoint, checkpoint,
-            on_conflict: [set: [last_position: position, halted: false, updated_at: now]],
-            conflict_target: :projector_name
+          checkpoint_multi =
+            Ecto.Multi.new()
+            |> Ecto.Multi.insert(:checkpoint, checkpoint,
+              on_conflict: [set: [last_position: position, halted: false, updated_at: now]],
+              conflict_target: :projector_name
+            )
+
+          # Read-model Multi first, checkpoint second — argument order matters (RESEARCH Pitfall 3)
+          combined = Ecto.Multi.append(read_model_multi, checkpoint_multi)
+
+          case repo.transaction(combined) do
+            {:ok, _changes} ->
+              Logger.debug("Projector applied event",
+                projector: projector_name,
+                position: position,
+                orkestra: :projector
+              )
+
+              # TEL-02: Emit lag metric after successful commit so operators can
+              # monitor how far behind this projector is from the latest event.
+              lag = (state.last_seen_position || position) - position
+
+              :telemetry.execute(
+                [:orkestra, :projector, :lag],
+                %{lag: lag},
+                %{projector_name: projector_name}
+              )
+
+              # TEL-03: Emit rebuild progress when in rebuild mode so operators
+              # can track completion percentage during long replays.
+              new_state =
+                if state.rebuild_total && state.rebuild_total > 0 do
+                  replayed = state.rebuild_events_replayed + 1
+
+                  :telemetry.execute(
+                    [:orkestra, :projector, :rebuild_progress],
+                    %{events_replayed: replayed, total_events: state.rebuild_total},
+                    %{
+                      projector_name: projector_name,
+                      percent: Float.round(replayed / state.rebuild_total * 100, 1)
+                    }
+                  )
+
+                  %{state | attempts: 0, rebuild_events_replayed: replayed}
+                else
+                  %{state | attempts: 0}
+                end
+
+              {:noreply, new_state}
+
+            {:error, step, reason, _changes} ->
+              # TEL-01: Mark span as error on transaction failure
+              Tracer.set_status(:error, inspect(reason))
+
+              Logger.warning("Projector event commit failed",
+                projector: projector_name,
+                position: position,
+                step: step,
+                reason: inspect(reason),
+                orkestra: :projector
+              )
+
+              handle_failure(event, {step, reason}, state)
+          end
+
+        {:error, reason} ->
+          # TEL-01: Mark span as error on storage adapter failure
+          Tracer.set_status(:error, inspect(reason))
+
+          Logger.warning("Projector storage_adapter.write/4 failed",
+            projector: projector_name,
+            position: position,
+            reason: inspect(reason),
+            orkestra: :projector
           )
 
-        # Read-model Multi first, checkpoint second — argument order matters (RESEARCH Pitfall 3)
-        combined = Ecto.Multi.append(read_model_multi, checkpoint_multi)
-
-        case repo.transaction(combined) do
-          {:ok, _changes} ->
-            Logger.debug("Projector applied event",
-              projector: projector_name,
-              position: position,
-              orkestra: :projector
-            )
-
-            {:noreply, %{state | attempts: 0}}
-
-          {:error, step, reason, _changes} ->
-            Logger.warning("Projector event commit failed",
-              projector: projector_name,
-              position: position,
-              step: step,
-              reason: inspect(reason),
-              orkestra: :projector
-            )
-
-            handle_failure(event, {step, reason}, state)
-        end
-
-      {:error, reason} ->
-        Logger.warning("Projector storage_adapter.write/4 failed",
-          projector: projector_name,
-          position: position,
-          reason: inspect(reason),
-          orkestra: :projector
-        )
-
-        handle_failure(event, reason, state)
+          handle_failure(event, reason, state)
+      end
     end
   end
 
@@ -291,6 +338,13 @@ defmodule Orkestra.Projector.GenServer do
         )
 
         Process.send_after(self(), {:retry_event, event}, delay)
+
+        :telemetry.execute(
+          [:orkestra, :projector, :retry],
+          %{attempts: new_attempts, delay_ms: delay},
+          %{projector_name: state.projector_name, position: event.global_position}
+        )
+
         {:noreply, %{state | attempts: new_attempts}}
 
       :park ->
@@ -360,6 +414,24 @@ defmodule Orkestra.Projector.GenServer do
           orkestra: :projector
         )
     end
+
+    # TEL-04: Emit halt telemetry regardless of DB success/failure — the
+    # GenServer is halting either way and operators need alerting.
+    :telemetry.execute(
+      [:orkestra, :projector, :halted],
+      %{attempts: attempts},
+      %{
+        projector_name: projector_name,
+        position: event.global_position,
+        reason: inspect(reason)
+      }
+    )
+
+    Tracer.add_event("projector.halted", %{
+      "orkestra.projector.name" => projector_name,
+      "orkestra.projector.position" => event.global_position,
+      "error.attempts" => attempts
+    })
 
     # Always transition to halted state — a DB failure persisting the halt is
     # still a severe condition; stay alive to avoid supervisor restart loops

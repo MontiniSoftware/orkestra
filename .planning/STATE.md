@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 1
+current_phase: 01
 current_phase_name: Foundations
 status: executing
 stopped_at: Roadmap created, STATE.md initialized, REQUIREMENTS.md traceability updated
-last_updated: "2026-06-24T11:33:21.872Z"
+last_updated: "2026-06-24T11:49:53.721Z"
 last_activity: 2026-06-24
-last_activity_desc: Roadmap created; requirements mapped to 5 phases
+last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 5
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 3
+  completed_plans: 1
   percent: 0
 ---
 
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-24)
 
 **Core value:** A developer can define a projection that consumes domain events and maintains a queryable read model — with safe rebuilds, in-order error handling, and per-projection migrations — without writing the plumbing themselves.
-**Current focus:** Phase 1 — Foundations (not yet started)
+**Current focus:** Phase 01 — Foundations
 
 ## Current Position
 
-Phase: 1 of 5 (Foundations)
-Plan: 0 of TBD in current phase
+Phase: 01 (Foundations) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-06-24 — Roadmap created; requirements mapped to 5 phases
+Last activity: 2026-06-24 — Phase 01 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -55,6 +55,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: —
 
 *Updated after each plan completion*
+| Phase 01 P01 | 9 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -66,6 +67,8 @@ Recent decisions affecting current work:
 - Roadmap: EventStore catch-up subscription (not MessageBus) is the consumption model — Phase 1 extends the EventStore behaviour before Phase 2 builds the GenServer against it
 - Roadmap: Checkpoint + read-model write must be in one Ecto.Multi transaction — non-negotiable correctness constraint established in Phase 2
 - Roadmap: Per-projection isolated Ecto.Repo with separate `migration_source` — independent migrate/rollback/drop/rebuild cycles
+- [Phase ?]: No transient/permanent classification in v1
+- [Phase ?]: Fully unit-testable with async: true
 
 ### Pending Todos
 
@@ -86,6 +89,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-24
+Last session: 2026-06-24T11:49:53.714Z
 Stopped at: Roadmap created, STATE.md initialized, REQUIREMENTS.md traceability updated
 Resume file: None

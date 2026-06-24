@@ -33,10 +33,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `Orkestra.Projector.Lifecycle` pure functions correctly classify errors, compute retry delays, and decide halt — verifiable via unit tests with no I/O
   4. The `Orkestra.EventStore` behaviour exposes a `subscribe_from_position/3` callback; both InMemory and EventStoreDB adapters implement it, and the InMemory emulation delivers events in order during tests
 
-**Plans**: 3 plans
+**Plans**: 1/3 plans executed
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — Optional Ecto deps + pure Projector.Lifecycle (retry/backoff/halt) [ERR-01, ERR-03]
+- [x] 01-01-PLAN.md — Optional Ecto deps + pure Projector.Lifecycle (retry/backoff/halt) [ERR-01, ERR-03]
 - [ ] 01-02-PLAN.md — Storage behaviour + EventStore subscribe_from_position/3 (both adapters) [STORE-01, PROJ-02]
 
 **Wave 2** *(blocked on Wave 1 completion)*
@@ -108,7 +108,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundations | 0/3 | Not started | - |
+| 1. Foundations | 1/3 | In Progress|  |
 | 2. Projector GenServer + Ecto Adapter | 0/TBD | Not started | - |
 | 3. DSL, Supervisor, Mix Tasks, and Config | 0/TBD | Not started | - |
 | 4. Telemetry & Observability | 0/TBD | Not started | - |

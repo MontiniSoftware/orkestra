@@ -29,8 +29,11 @@ defmodule Orkestra.MixProject do
       {:jason, "~> 1.2"},
       {:phoenix_pubsub, "~> 2.0"},
       {:amqp, "~> 4.1", optional: true},
+      {:ecto, "~> 3.12", optional: true},
+      {:ecto_sql, "~> 3.12", optional: true},
       {:opentelemetry_api, "~> 1.5"},
       {:opentelemetry_process_propagator, "~> 0.3", optional: true},
+      {:postgrex, "~> 0.18", optional: true},
       {:spear, "~> 1.4", optional: true},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false}
     ]

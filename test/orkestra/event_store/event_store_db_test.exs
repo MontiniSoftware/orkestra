@@ -11,6 +11,14 @@ defmodule Orkestra.EventStore.EventStoreDBTest do
   verified against a live EventStoreDB in Phase 2 integration tests.
   """
 
+  # Ensure the module is loaded before any export check — `function_exported?/3`
+  # returns false for a not-yet-loaded module, which made the export tests flaky
+  # under randomized async ordering.
+  setup_all do
+    {:module, _} = Code.ensure_loaded(Orkestra.EventStore.EventStoreDB)
+    :ok
+  end
+
   describe "Orkestra.EventStore.EventStoreDB module wiring" do
     test "module is available and loadable" do
       assert {:module, Orkestra.EventStore.EventStoreDB} =

@@ -13,6 +13,7 @@ defmodule OrkestraMcp.Server do
   component(OrkestraMcp.Tools.GenEventHandler)
   component(OrkestraMcp.Tools.GenAggregate)
   component(OrkestraMcp.Tools.GenProjection)
+  component(OrkestraMcp.Tools.GenEsProjection)
   component(OrkestraMcp.Tools.GenReadModel)
   component(OrkestraMcp.Tools.GenQueries)
   component(OrkestraMcp.Tools.GenEsQueries)

@@ -173,12 +173,15 @@ defmodule OrkestraMcp.Introspection do
   end
 
   defp extract_projected_events_all(content) do
+    # Match both `project EventModule,` and `project(EventModule,` formats
     postgres_events =
-      Regex.scan(~r/project\s+([\w.]+),/, content)
+      Regex.scan(~r/project[\s(]+([\w.]+),/, content)
       |> Enum.map(fn [_, e] -> e end)
 
+    # Match both `project_es EventModule,` and `project_es(EventModule,` formats
+    # Use negative lookbehind via a separate scan to avoid matching `project` inside `project_es`
     es_events =
-      Regex.scan(~r/project_es\s+([\w.]+),/, content)
+      Regex.scan(~r/project_es[\s(]+([\w.]+),/, content)
       |> Enum.map(fn [_, e] -> e end)
 
     Enum.uniq(postgres_events ++ es_events)

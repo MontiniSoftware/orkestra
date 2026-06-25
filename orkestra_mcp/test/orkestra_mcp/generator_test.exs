@@ -296,7 +296,11 @@ defmodule OrkestraMcp.GeneratorTest do
     end
 
     test "generates one project_es clause per event when multiple events given" do
-      events = ["MyApp.Events.OrderPlaced", "MyApp.Events.OrderCancelled", "MyApp.Events.OrderShipped"]
+      events = [
+        "MyApp.Events.OrderPlaced",
+        "MyApp.Events.OrderCancelled",
+        "MyApp.Events.OrderShipped"
+      ]
 
       {source, _file_path} =
         Generator.gen_es_projection(

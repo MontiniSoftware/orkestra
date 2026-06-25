@@ -85,8 +85,25 @@ defmodule OrkestraMcp.IntrospectionTest do
       projector = Enum.find(projectors, &(&1.module == "MyApp.Orders.Projectors.OrderProjector"))
       assert projector
       assert projector.repo == "MyApp.OrderProjection.Repo"
+      assert projector.backend == :postgres
+      assert projector.cluster == nil
+      assert projector.index == nil
       assert "MyApp.Orders.Events.OrderPlaced" in projector.events
       assert "MyApp.Orders.Events.OrderCancelled" in projector.events
+    end
+
+    test "discovers ES projectors" do
+      %{projectors: projectors} = Introspection.discover(@fixture_dir)
+
+      es_proj =
+        Enum.find(projectors, &(&1.module == "MyApp.Orders.Projectors.OrderESProjector"))
+
+      assert es_proj
+      assert es_proj.backend == :elasticsearch
+      assert es_proj.repo == "MyApp.OrderProjection.Repo"
+      assert es_proj.cluster == "MyApp.ESCluster"
+      assert es_proj.index == "orders"
+      assert "MyApp.Orders.Events.OrderPlaced" in es_proj.events
     end
 
     test "returns empty lists for project with no Orkestra modules" do
@@ -115,7 +132,16 @@ defmodule OrkestraMcp.IntrospectionTest do
     test "includes projectors in domain map" do
       map = Introspection.build_domain_map(@fixture_dir)
 
-      assert map =~ "MyApp.Orders.Projectors.OrderProjector (projector)"
+      assert map =~ "MyApp.Orders.Projectors.OrderProjector (projector, backend: postgres)"
+      assert map =~ "MyApp.Orders.Events.OrderPlaced (projected_event)"
+    end
+
+    test "includes ES projectors in domain map" do
+      map = Introspection.build_domain_map(@fixture_dir)
+
+      assert map =~
+               "MyApp.Orders.Projectors.OrderESProjector (projector, backend: elasticsearch, index: orders)"
+
       assert map =~ "MyApp.Orders.Events.OrderPlaced (projected_event)"
     end
   end

@@ -18,7 +18,7 @@ defmodule MyApp.Orders.Projectors.OrderESProjector do
     }
   end
 
-  project_es MyApp.Orders.Events.OrderPlaced, fn _event, _position ->
+  project_es(MyApp.Orders.Events.OrderPlaced, fn _event, _position ->
     {:ok, %{}, nil}
-  end
+  end)
 end

@@ -206,6 +206,14 @@ defmodule Orkestra.Projector.GenServer do
 
   @doc false
   @impl GenServer
+  def terminate(_reason, %{es_buffer: [_ | _]} = state) do
+    # Best-effort flush of remaining buffered ES operations before shutdown.
+    # Ensures partial batches are not silently dropped on graceful termination.
+    flush_es_buffer_on_terminate(state)
+    # Delegate to the unsubscribe clause (with cleared buffer so no recursion)
+    terminate(:shutdown, %{state | es_buffer: []})
+  end
+
   def terminate(_reason, %{event_store: event_store, subscription_ref: ref})
       when is_reference(ref) do
     # Clean up the subscription if the adapter exports unsubscribe/1
@@ -236,7 +244,16 @@ defmodule Orkestra.Projector.GenServer do
     Tracer.with_span "orkestra.projector.apply_event",
       attributes: OTel.projector_span_attrs(projector_name, event, position) do
       case storage_adapter.write(projector_name, event, position, adapter_opts) do
+        {:ok, %{action: :index} = es_op} ->
+          # ES path — live single-doc write or catch-up bulk accumulation
+          apply_es_event(event, es_op, position, state)
+
+        {:ok, %{action: :skip}} ->
+          # ES skip — no document to write, but checkpoint must still advance
+          update_es_checkpoint_only(event, position, state)
+
         {:ok, read_model_multi} ->
+          # Postgres path (Ecto.Multi) — unchanged
           now = DateTime.utc_now()
 
           checkpoint = %Checkpoint{
@@ -324,6 +341,279 @@ defmodule Orkestra.Projector.GenServer do
 
           handle_failure(event, reason, state)
       end
+    end
+  end
+
+  # Branches between live single-doc write and catch-up bulk buffer accumulation
+  defp apply_es_event(event, %{action: :index, id: id, doc: doc}, position, state) do
+    action = %Snap.Bulk.Action.Index{id: id, doc: doc}
+
+    case state.es_mode do
+      :live ->
+        commit_es_single_doc(event, action, position, state)
+
+      :catching_up ->
+        new_buffer = state.es_buffer ++ [{position, action}]
+
+        if length(new_buffer) >= state.es_batch_size do
+          flush_es_buffer(event, new_buffer, %{state | es_buffer: []})
+        else
+          {:noreply, %{state | es_buffer: new_buffer}}
+        end
+    end
+  end
+
+  # Live mode: writes a single document immediately via Snap.Document.index/6
+  defp commit_es_single_doc(event, action, position, state) do
+    %{adapter_opts: adapter_opts, projector_name: projector_name} = state
+    cluster = Keyword.fetch!(adapter_opts, :cluster)
+    index = Keyword.fetch!(adapter_opts, :index)
+    engine = Keyword.get(adapter_opts, :engine, :elasticsearch)
+
+    result =
+      Tracer.with_span "orkestra.es.single_doc_index",
+        attributes:
+          Map.put(
+            OTel.es_span_attrs(projector_name, index, engine),
+            "orkestra.projector.position",
+            position
+          ) do
+        case Snap.Document.index(cluster, index, action.doc, action.id) do
+          {:ok, _} ->
+            :ok
+
+          {:error, reason} ->
+            Tracer.set_status(:error, inspect(reason))
+            {:error, reason}
+        end
+      end
+
+    case result do
+      :ok ->
+        commit_es_checkpoint(event, position, state)
+
+      {:error, reason} ->
+        Logger.warning("ES single-doc index failed",
+          projector: projector_name,
+          position: position,
+          reason: inspect(reason),
+          orkestra: :projector
+        )
+
+        handle_failure(event, reason, state)
+    end
+  end
+
+  # Catch-up mode: bulk-flushes the accumulated buffer via Snap.Bulk.perform/4
+  defp flush_es_buffer(last_event, buffer, state) do
+    %{adapter_opts: adapter_opts, projector_name: projector_name} = state
+    cluster = Keyword.fetch!(adapter_opts, :cluster)
+    index = Keyword.fetch!(adapter_opts, :index)
+    engine = Keyword.get(adapter_opts, :engine, :elasticsearch)
+
+    actions = Enum.map(buffer, fn {_pos, action} -> action end)
+    {last_position, _} = List.last(buffer)
+
+    started_at = System.monotonic_time(:millisecond)
+
+    result =
+      Tracer.with_span "orkestra.es.bulk_flush",
+        attributes: OTel.es_span_attrs(projector_name, index, engine, length(actions)) do
+        # Always pass page_size + page_wait: 0 for bounded GenServer buffers
+        # to avoid the 15-second default page_wait in Snap.Bulk (T-07-05)
+        case Snap.Bulk.perform(actions, cluster, index,
+               page_size: length(actions),
+               page_wait: 0
+             ) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Tracer.set_status(:error, inspect(reason))
+            {:error, reason}
+        end
+      end
+
+    elapsed_ms = System.monotonic_time(:millisecond) - started_at
+
+    case result do
+      :ok ->
+        :telemetry.execute(
+          [:orkestra, :projector, :es_bulk_flush],
+          %{batch_size: length(actions), duration_ms: elapsed_ms},
+          %{projector_name: projector_name, index: index, engine: engine}
+        )
+
+        # Advance checkpoint to last position in the flushed batch
+        state_after_flush = %{
+          state
+          | es_buffer: [],
+            rebuild_events_replayed: state.rebuild_events_replayed + length(buffer)
+        }
+
+        commit_es_checkpoint(last_event, last_position, state_after_flush)
+
+      {:error, %Snap.BulkError{errors: errors} = bulk_err} ->
+        Logger.warning("ES bulk flush partial failure",
+          projector: projector_name,
+          error_count: length(errors),
+          errors: Enum.map(errors, fn e -> %{type: e.type, message: e.message, status: e.status} end),
+          orkestra: :projector
+        )
+
+        # Do NOT advance checkpoint on partial failure (T-07-01) — at-least-once replay
+        handle_failure(last_event, bulk_err, %{state | es_buffer: []})
+
+      {:error, reason} ->
+        Logger.warning("ES bulk flush failed",
+          projector: projector_name,
+          reason: inspect(reason),
+          orkestra: :projector
+        )
+
+        handle_failure(last_event, reason, %{state | es_buffer: []})
+    end
+  end
+
+  # Commits the Postgres checkpoint after a successful ES write (ES-first semantics)
+  defp commit_es_checkpoint(event, position, state) do
+    %{repo: repo, projector_name: projector_name} = state
+    now = DateTime.utc_now()
+
+    checkpoint = %Checkpoint{
+      projector_name: projector_name,
+      last_position: position,
+      halted: false,
+      updated_at: now
+    }
+
+    checkpoint_multi =
+      Ecto.Multi.new()
+      |> Ecto.Multi.insert(:checkpoint, checkpoint,
+        on_conflict: [set: [last_position: position, halted: false, updated_at: now]],
+        conflict_target: :projector_name
+      )
+
+    # ES path: checkpoint transaction runs standalone (not via Ecto.Multi.append)
+    case repo.transaction(checkpoint_multi) do
+      {:ok, _} ->
+        Logger.debug("ES projector checkpoint updated",
+          projector: projector_name,
+          position: position,
+          orkestra: :projector
+        )
+
+        lag = (state.last_seen_position || position) - position
+
+        :telemetry.execute(
+          [:orkestra, :projector, :lag],
+          %{lag: lag},
+          %{projector_name: projector_name}
+        )
+
+        new_state =
+          if state.rebuild_total && state.rebuild_total > 0 do
+            replayed = state.rebuild_events_replayed
+
+            :telemetry.execute(
+              [:orkestra, :projector, :rebuild_progress],
+              %{events_replayed: replayed, total_events: state.rebuild_total},
+              %{
+                projector_name: projector_name,
+                percent: Float.round(replayed / state.rebuild_total * 100, 1)
+              }
+            )
+
+            %{state | attempts: 0}
+          else
+            %{state | attempts: 0}
+          end
+
+        {:noreply, new_state}
+
+      {:error, step, reason, _} ->
+        Logger.warning("ES projector checkpoint commit failed",
+          projector: projector_name,
+          position: position,
+          step: step,
+          reason: inspect(reason),
+          orkestra: :projector
+        )
+
+        handle_failure(event, {step, reason}, state)
+    end
+  end
+
+  # Skip path: event handler returned :skip — advance checkpoint without ES write
+  defp update_es_checkpoint_only(event, position, state) do
+    %{projector_name: projector_name} = state
+
+    Logger.debug("ES projector skipping event (no write needed)",
+      projector: projector_name,
+      position: position,
+      orkestra: :projector
+    )
+
+    commit_es_checkpoint(event, position, state)
+  end
+
+  # Best-effort flush of remaining ES buffer on GenServer termination.
+  # Uses synchronous Snap.Bulk.perform without OTel (process is terminating).
+  # On failure, logs a warning — events will be replayed on restart (at-least-once semantics).
+  defp flush_es_buffer_on_terminate(state) do
+    %{adapter_opts: adapter_opts, projector_name: projector_name, es_buffer: buffer} = state
+    cluster = Keyword.fetch!(adapter_opts, :cluster)
+    index = Keyword.fetch!(adapter_opts, :index)
+
+    actions = Enum.map(buffer, fn {_pos, action} -> action end)
+    {last_position, _} = List.last(buffer)
+
+    case Snap.Bulk.perform(actions, cluster, index,
+           page_size: length(actions),
+           page_wait: 0
+         ) do
+      :ok ->
+        now = DateTime.utc_now()
+
+        checkpoint = %Checkpoint{
+          projector_name: projector_name,
+          last_position: last_position,
+          halted: false,
+          updated_at: now
+        }
+
+        checkpoint_multi =
+          Ecto.Multi.new()
+          |> Ecto.Multi.insert(:checkpoint, checkpoint,
+            on_conflict: [set: [last_position: last_position, halted: false, updated_at: now]],
+            conflict_target: :projector_name
+          )
+
+        case state.repo.transaction(checkpoint_multi) do
+          {:ok, _} ->
+            Logger.debug("ES projector terminate flush: checkpoint updated",
+              projector: projector_name,
+              last_position: last_position,
+              orkestra: :projector
+            )
+
+          {:error, step, reason, _} ->
+            Logger.warning("ES projector terminate flush: checkpoint update failed",
+              projector: projector_name,
+              step: step,
+              reason: inspect(reason),
+              orkestra: :projector
+            )
+        end
+
+      {:error, reason} ->
+        Logger.warning(
+          "ES projector terminate flush failed — buffered events will be replayed on restart",
+          projector: projector_name,
+          buffer_size: length(buffer),
+          reason: inspect(reason),
+          orkestra: :projector
+        )
     end
   end
 

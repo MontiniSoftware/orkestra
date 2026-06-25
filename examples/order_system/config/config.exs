@@ -1,20 +1,21 @@
 import Config
 
+# --- Ecto Repos ---
+config :order_system, ecto_repos: [OrderSystem.Repo]
+
 # --- Message Bus ---
-config :order_system, :message_bus, Orkestra.MessageBus.PubSub
+# Orkestra's PubSub bus reads its Phoenix.PubSub name from this config
+config :orkestra, Orkestra.MessageBus.PubSub,
+  pubsub: OrderSystem.PubSub
 
-# --- PubSub ---
-config :order_system, OrderSystem.PubSub, name: OrderSystem.PubSub
-
-config :orkestra, :pubsub,
-  name: OrderSystem.PubSub,
-  adapter: Phoenix.PubSub.PG2
+# Topic derivation: strip the app prefix from module names
+config :orkestra, Orkestra.MessageBus,
+  app_prefix: OrderSystem
 
 # --- Event Store ---
-config :order_system, :event_store, Orkestra.EventStore.InMemory
+# Using InMemory for this example (replace with EventStoreDB in production)
 
-# --- PostgreSQL Repos ---
-# Main repo (for projection checkpoints + dead letters + Postgres read model)
+# --- PostgreSQL Repo ---
 config :order_system, OrderSystem.Repo,
   database: "order_system_dev",
   username: "postgres",

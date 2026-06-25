@@ -1,0 +1,11 @@
+_build/
+deps/
+.git/
+.planning/
+orkestra_mcp/
+test/
+docs/
+*.md
+.tool-versions
+examples/order_system/_build/
+examples/order_system/deps/

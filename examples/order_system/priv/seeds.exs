@@ -3,12 +3,12 @@
 # Run with: mix seed
 # (or: mix run priv/seeds.exs)
 
-alias Orkestra.{CommandEnvelope, Metadata}
+alias Orkestra.{CommandEnvelope, MessageBus}
 alias OrderSystem.Orders.Commands.PlaceOrder
 
 IO.puts("\n--- Placing sample orders ---\n")
 
-bus = Application.get_env(:order_system, :message_bus)
+bus = MessageBus.impl()
 
 orders = [
   %{order_id: "ORD-001", product_name: "Elixir in Action", quantity: 2, price: 45.99, customer_email: "alice@example.com"},
@@ -20,15 +20,16 @@ orders = [
 
 for order_params <- orders do
   {:ok, cmd} = PlaceOrder.new(order_params)
-  metadata = Metadata.new(actor_id: "seed-script", source: "priv/seeds.exs")
-  envelope = CommandEnvelope.wrap(cmd, max_retries: 3)
+  envelope = CommandEnvelope.wrap(cmd)
 
-  case bus.dispatch(envelope) do
-    :ok ->
-      IO.puts("  Placed: #{order_params.order_id} — #{order_params.product_name} x#{order_params.quantity}")
+  result = bus.dispatch(envelope)
 
+  case result do
     {:error, reason} ->
       IO.puts("  FAILED: #{order_params.order_id} — #{inspect(reason)}")
+
+    _ ->
+      IO.puts("  Placed: #{order_params.order_id} — #{order_params.product_name} x#{order_params.quantity}")
   end
 
   # Small delay to let projectors process

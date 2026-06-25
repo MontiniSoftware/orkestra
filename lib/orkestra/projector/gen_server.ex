@@ -128,11 +128,45 @@ defmodule Orkestra.Projector.GenServer do
       es_mode: if(Map.get(config, :rebuild_total), do: :catching_up, else: :live)
     }
 
-    # Defer all Repo calls — enqueue :load_checkpoint so the test can call
-    # Sandbox.allow/3 after start_supervised!/1 returns (RESEARCH Pitfall 1).
-    send(self(), :load_checkpoint)
+    # Defer all Repo/HTTP calls. If the storage adapter exports init/1
+    # (e.g. Storage.Elasticsearch), send :init_adapter first so it can perform
+    # engine detection and index creation before the checkpoint is loaded.
+    # This preserves the Sandbox.allow/3 window for tests (RESEARCH Pitfall 1).
+    if function_exported?(Map.fetch!(config, :storage_adapter), :init, 1) do
+      send(self(), :init_adapter)
+    else
+      send(self(), :load_checkpoint)
+    end
 
     {:ok, state}
+  end
+
+  @doc false
+  @impl GenServer
+  def handle_info(:init_adapter, state) do
+    case state.storage_adapter.init(state.adapter_opts) do
+      {:ok, %{engine: engine}} ->
+        # Write detected engine back into adapter_opts so that commit_es_single_doc
+        # and flush_es_buffer use the correct engine atom in OTel spans (T-08-03).
+        new_adapter_opts = Keyword.put(state.adapter_opts, :engine, engine)
+        send(self(), :load_checkpoint)
+        {:noreply, %{state | adapter_opts: new_adapter_opts}}
+
+      {:ok, _adapter_state} ->
+        # init/1 succeeded but returned no engine — proceed without engine update
+        send(self(), :load_checkpoint)
+        {:noreply, state}
+
+      {:error, reason} ->
+        # Do NOT log adapter_opts (credential risk T-08-02)
+        Logger.error("Projector adapter init failed",
+          projector: state.projector_name,
+          reason: inspect(reason),
+          orkestra: :projector
+        )
+
+        {:stop, {:adapter_init_failed, reason}, state}
+    end
   end
 
   @doc false

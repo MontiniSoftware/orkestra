@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Orkestra is an Elixir CQRS / event-sourcing library (plus an `orkestra_mcp` MCP server/CLI for code generation) for building event-driven Elixir applications. It provides command dispatch, aggregate lifecycle, event handling, pluggable message bus and event store adapters, and a **projection / read-model subsystem** with PostgreSQL/Ecto as the first storage adapter.
+Orkestra is an Elixir CQRS / event-sourcing library (plus an `orkestra_mcp` MCP server/CLI for code generation) for building event-driven Elixir applications. It provides command dispatch, aggregate lifecycle, event handling, pluggable message bus and event store adapters, and a **projection / read-model subsystem** with PostgreSQL/Ecto and Elasticsearch/OpenSearch storage adapters.
 
 ## Core Value
 
@@ -42,12 +42,23 @@ A developer can define a projection that consumes domain events and maintains a 
 
 ### Active
 
-(None yet — define with `/gsd-new-milestone`)
+## Current Milestone: v1.1 Elasticsearch / OpenSearch Projection Adapter
+
+**Goal:** Add an ES/OpenSearch storage adapter to the existing projection subsystem, with zero-downtime rebuild, batch indexing, and an Elixir query DSL.
+
+**Target features:**
+- ES/OpenSearch storage adapter implementing `Orkestra.Projection.Storage` behaviour
+- Direct HTTP client (Req/Finch) — compatible with ES 8.x and OpenSearch 2.x+
+- Index mappings management for projections
+- Zero-downtime rebuild via alias swap
+- Automatic batch indexing during catch-up/rebuild (single-doc in live mode)
+- Elixir query DSL for composing ES queries (match, filter, aggs)
+- Versioned reindex support
 
 ### Out of Scope
 
 - MongoDB projection adapter — deferred to v2; build on the proven abstraction after Postgres
-- Elasticsearch projection adapter — deferred to v2; full support means index mappings, versioned reindex, search query helpers, zero-downtime rebuild via alias swap, bulk indexing
+- Elasticsearch projection adapter — promoted to v1.1 (Active)
 - Fully-uniform write-once query API across all backends — rejected; storage write/query APIs stay adapter-specific
 - Synchronous (write-path inline) projections — rejected for v1 in favor of async + replay
 - Dead-letter drain/resume tooling — deferred to v2
@@ -103,4 +114,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-24 after v1.0 milestone*
+*Last updated: 2026-06-25 after v1.1 milestone start*

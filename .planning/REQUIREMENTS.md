@@ -13,9 +13,9 @@ Requirements for Elasticsearch / OpenSearch Projection Adapter. Each maps to roa
 - [x] **ADPT-02**: Engine detection at runtime distinguishes ES 8.x from OpenSearch 2.x+ and handles API divergences
 - [x] **ADPT-03**: Authentication supports Basic Auth and API key auth via Snap.Auth behaviour
 - [x] **ADPT-04**: All writes use full-document `index` with deterministic `_id` for idempotency
-- [ ] **ADPT-05**: Projector DSL supports `backend: :elasticsearch` option with `project_es/2` macro
+- [x] **ADPT-05**: Projector DSL supports `backend: :elasticsearch` option with `project_es/2` macro
 - [x] **ADPT-06**: Index mappings defined via `index_mapping/0` callback in projector module
-- [ ] **ADPT-07**: Checkpoint writes follow ES-first, Postgres-second ordering (at-least-once semantics)
+- [x] **ADPT-07**: Checkpoint writes follow ES-first, Postgres-second ordering (at-least-once semantics)
 
 ### Bulk Indexing
 
@@ -80,9 +80,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ADPT-02 | Phase 6 | Complete |
 | ADPT-03 | Phase 6 | Complete |
 | ADPT-04 | Phase 6 | Complete |
-| ADPT-05 | Phase 8 | Pending |
+| ADPT-05 | Phase 8 | Complete |
 | ADPT-06 | Phase 6 | Complete |
-| ADPT-07 | Phase 8 | Pending |
+| ADPT-07 | Phase 8 | Complete |
 | BULK-01 | Phase 7 | Complete |
 | BULK-02 | Phase 7 | Complete |
 | BULK-03 | Phase 7 | Complete |

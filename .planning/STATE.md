@@ -4,14 +4,14 @@ milestone: v1.1
 milestone_name: Elasticsearch / OpenSearch Projection Adapter
 status: verifying
 stopped_at: Roadmap created — ready to plan Phase 6
-last_updated: "2026-06-25T08:30:06.176Z"
+last_updated: "2026-06-25T08:56:51.111Z"
 last_activity: 2026-06-25
 progress:
   total_phases: 6
-  completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
-  percent: 33
+  completed_phases: 3
+  total_plans: 5
+  completed_plans: 5
+  percent: 50
 ---
 
 # Project State
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-25)
 
 **Core value:** A developer can define a projection that consumes domain events and maintains a queryable read model — with safe rebuilds, in-order error handling, and per-projection migrations — without writing the plumbing themselves.
-**Current focus:** Phase 07 — genserver-es-commit-path-and-batch-indexing
+**Current focus:** Phase 08 — projector-macro-dsl-for-elasticsearch
 
 ## Current Position
 
-Phase: 07 (genserver-es-commit-path-and-batch-indexing) — EXECUTING
-Plan: 2 of 2
+Phase: 08 (projector-macro-dsl-for-elasticsearch) — EXECUTING
+Plan: 1 of 1
 Status: Phase complete — ready for verification
 Last activity: 2026-06-25
 
@@ -66,6 +66,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-25T08:30:06.170Z
+Last session: 2026-06-25T08:56:51.104Z
 Stopped at: Roadmap created — ready to plan Phase 6
 Resume file: None

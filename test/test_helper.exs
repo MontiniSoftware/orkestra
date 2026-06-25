@@ -32,4 +32,11 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL.Sandbox) do
   end
 end
 
-ExUnit.start(exclude: [:postgres])
+if Code.ensure_loaded?(Snap.Cluster) do
+  Application.put_env(:orkestra, Orkestra.Test.ESCluster,
+    url: "http://localhost:9200",
+    http_client_adapter: Snap.MockHTTPClient
+  )
+end
+
+ExUnit.start(exclude: [:postgres, :elasticsearch, :integration])

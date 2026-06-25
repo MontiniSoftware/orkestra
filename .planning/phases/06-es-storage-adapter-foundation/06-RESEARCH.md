@@ -638,22 +638,16 @@ end
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **What exactly does `write/4` receive from the projector module in Phase 6?**
-   - What we know: Phase 8 introduces `project_es/2` and `document_id/1` DSL. Phase 6 is foundation-only; no DSL yet.
-   - What's unclear: Should `write/4` accept a `:handler` fn (same as Postgres adapter) or should there be a minimal `__handle_es__/2` stub on the projector module now?
-   - Recommendation: Use the `:handler` option pattern from the Postgres adapter for Phase 6. The handler function takes `(event, position)` and returns `{:ok, doc, id} | :skip | {:error, reason}`. Phase 8 wires this automatically via the DSL macro.
+   - **Resolved:** Use the `:handler` option pattern from the Postgres adapter. The handler function takes `(projector_name, event, position)` and returns `{:ok, doc, id} | :skip | {:error, reason}`. Phase 8 wires this automatically via the DSL macro.
 
 2. **Does `Snap.Indexes.create/4` return a specific error struct for duplicate indexes?**
-   - What we know: Snap.ResponseError is the error type; ES returns `resource_already_exists_exception`.
-   - What's unclear: Exact field path in `%Snap.ResponseError{}` struct that exposes the error type string.
-   - Recommendation: Write a test against a real or mock ES cluster; also inspect Snap source or check hexdocs for ResponseError struct fields.
+   - **Resolved:** Snap wraps ES errors in `%Snap.ResponseError{}`. The adapter should pattern-match on the error message string containing `"resource_already_exists_exception"` rather than relying on a specific struct field. Implementation: `{:error, %Snap.ResponseError{} = err} -> if String.contains?(inspect(err), "resource_already_exists_exception"), do: :ok, else: {:error, {:index_creation_failed, err}}`. This approach is robust against Snap struct field name changes. Tests will use Mox to verify the happy path; integration tests with a real cluster validate the exact error shape.
 
 3. **Does Phase 6 need to manage the Snap.Cluster's supervision, or does the consuming app own it?**
-   - What we know: Snap.Cluster must be in the supervision tree. The adapter module is stateless.
-   - What's unclear: Should the adapter or the projector GenServer own cluster startup, or is this left entirely to the application?
-   - Recommendation: The cluster module is owned by the consuming application (added to their supervision tree). The adapter receives it via `adapter_opts[:cluster]`. Add clear docs and a mix task later (Phase 9). For tests, start a mock cluster via `start_supervised!`.
+   - **Resolved:** The cluster module is owned by the consuming application (added to their supervision tree). The adapter receives it via `adapter_opts[:cluster]`. For tests, use a mock cluster configured in `test_helper.exs`.
 
 ---
 

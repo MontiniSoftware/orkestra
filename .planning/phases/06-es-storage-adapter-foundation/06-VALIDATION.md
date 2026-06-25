@@ -38,11 +38,10 @@ created: 2026-06-25
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 06-01-01 | 01 | 1 | ADPT-01 | — | N/A | unit | `mix test test/orkestra/projection/storage/elasticsearch_test.exs` | ❌ W0 | ⬜ pending |
-| 06-01-02 | 01 | 1 | ADPT-02 | — | N/A | unit | `mix test test/orkestra/projection/storage/elasticsearch_test.exs` | ❌ W0 | ⬜ pending |
-| 06-01-03 | 01 | 1 | ADPT-03 | — | N/A | unit | `mix test test/orkestra/projection/storage/elasticsearch_test.exs` | ❌ W0 | ⬜ pending |
-| 06-01-04 | 01 | 1 | ADPT-04 | — | N/A | unit | `mix test test/orkestra/projection/storage/elasticsearch_test.exs` | ❌ W0 | ⬜ pending |
-| 06-01-05 | 01 | 1 | ADPT-06 | — | N/A | unit | `mix test test/orkestra/projection/storage/elasticsearch_test.exs` | ❌ W0 | ⬜ pending |
+| 06-01-01 | 01 | 1 | — | — | N/A | build | `mix deps.get && mix deps.compile snap finch mox --force` | ✅ | ⬜ pending |
+| 06-01-02 | 01 | 1 | ADPT-03 | T-06-01 | API key in header | unit | `mix test test/orkestra/auth/api_key_test.exs` | ❌ W0 | ⬜ pending |
+| 06-01-03 | 01 | 1 | — | — | N/A | build | `mix compile --warnings-as-errors && mix test --max-failures 1` | ✅ | ⬜ pending |
+| 06-02-01 | 02 | 2 | ADPT-01, ADPT-02, ADPT-04, ADPT-06 | T-06-03, T-06-05 | dynamic:strict, graceful detection | unit | `mix format --check-formatted lib/orkestra/projection/storage/elasticsearch.ex && mix test test/orkestra/projection/storage/elasticsearch_test.exs` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 

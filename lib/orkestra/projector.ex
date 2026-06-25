@@ -352,36 +352,81 @@ defmodule Orkestra.Projector do
         def __dispatch_es__(_type, _event, _position), do: :skip
       end
 
+    # Elixir 1.18+ type checker emits dead-code warnings when a case clause
+    # can never be reached (e.g. when all __dispatch__ clauses return :skip
+    # because no handlers are registered for that backend). To avoid these
+    # warnings, generate lean bridge functions that match only what
+    # __dispatch__ actually returns for the given backend.
+
+    # __handle__/3 (Postgres path):
+    # - ES backend with no Postgres handlers → always :skip → return {:ok, Multi.new()} directly
+    # - Postgres backend → may return {:ok, multi} | :skip → delegate to __dispatch__/3
+    #   Note: {:error, reason} clause is kept for forward-compatibility even though
+    #   the type checker considers it unreachable given current handler signatures.
+    postgres_handle_fn =
+      if backend == :elasticsearch do
+        quote do
+          @doc false
+          @spec __handle__(String.t(), map(), non_neg_integer()) ::
+                  {:ok, Ecto.Multi.t()} | {:error, term()}
+          def __handle__(_projector_name, _event, _position) do
+            {:ok, Ecto.Multi.new()}
+          end
+        end
+      else
+        quote do
+          @doc false
+          @spec __handle__(String.t(), map(), non_neg_integer()) ::
+                  {:ok, Ecto.Multi.t()} | {:error, term()}
+          def __handle__(projector_name, event, position) do
+            case __dispatch__(event.type, event, position) do
+              {:ok, multi} -> {:ok, multi}
+              :skip -> {:ok, Ecto.Multi.new()}
+            end
+          end
+        end
+      end
+
+    # __handle_es__/3 (ES path):
+    # - Postgres backend with no ES handlers → always :skip → return :skip directly
+    # - ES backend → may return {:ok, doc, id} | :skip | {:error, reason}
+    es_handle_fn =
+      if backend == :elasticsearch do
+        quote do
+          @doc false
+          @spec __handle_es__(String.t(), map(), non_neg_integer()) ::
+                  {:ok, map(), String.t()} | :skip | {:error, term()}
+          def __handle_es__(projector_name, event, position) do
+            case __dispatch_es__(event.type, event, position) do
+              {:ok, doc, id} -> {:ok, doc, id}
+              :skip -> :skip
+              {:error, reason} -> {:error, reason}
+            end
+          end
+        end
+      else
+        quote do
+          @doc false
+          @spec __handle_es__(String.t(), map(), non_neg_integer()) ::
+                  {:ok, map(), String.t()} | :skip | {:error, term()}
+          def __handle_es__(_projector_name, _event, _position) do
+            :skip
+          end
+        end
+      end
+
     quote do
       # Postgres dispatch clauses — generated for each registered event type
       unquote_splicing(dispatch_clauses)
       unquote(dispatch_fallback)
 
-      @doc false
-      @spec __handle__(String.t(), map(), non_neg_integer()) ::
-              {:ok, Ecto.Multi.t()} | {:error, term()}
-      def __handle__(projector_name, event, position) do
-        case __dispatch__(event.type, event, position) do
-          {:ok, multi} -> {:ok, multi}
-          {:error, reason} -> {:error, reason}
-          :skip -> {:ok, Ecto.Multi.new()}
-        end
-      end
+      unquote(postgres_handle_fn)
 
       # ES dispatch clauses — generated for each registered ES event type
       unquote_splicing(es_dispatch_clauses)
       unquote(es_dispatch_fallback)
 
-      @doc false
-      @spec __handle_es__(String.t(), map(), non_neg_integer()) ::
-              {:ok, map(), String.t()} | :skip | {:error, term()}
-      def __handle_es__(projector_name, event, position) do
-        case __dispatch_es__(event.type, event, position) do
-          {:ok, doc, id} -> {:ok, doc, id}
-          :skip -> :skip
-          {:error, reason} -> {:error, reason}
-        end
-      end
+      unquote(es_handle_fn)
 
       @doc """
       Returns the compile-time projection configuration map.

@@ -438,6 +438,13 @@ defmodule OrkestraMcp.Generator do
         }
       end
 
+      @doc "Derives a deterministic document ID from the event for idempotent writes."
+      def document_id(event) do
+        # TODO: return a deterministic string ID for the ES document, e.g.:
+        # event.data["order_id"] or "\#{event.type}-\#{event.data["id"]}"
+        "\#{event.type}-\#{event.id}"
+      end
+
     #{project_es_clauses}
     end
     """

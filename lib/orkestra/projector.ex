@@ -516,6 +516,10 @@ defmodule Orkestra.Projector do
             }
           end
 
+        # Register the GenServer under the module name so GenServer.whereis/1 works
+        # (needed by mix orkestra.projection.es.rebuild for pause/resume)
+        config = Map.put_new(config, :name, __MODULE__)
+
         # Merge runtime overrides from opts (allows test Repo injection etc.)
         config = Map.merge(config, Map.new(opts))
 

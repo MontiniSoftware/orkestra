@@ -433,6 +433,74 @@ if Code.ensure_loaded?(Snap.Cluster) do
     end
 
     # ---------------------------------------------------------------------------
+    # Tests 7-8 (RBLD-03): pause_writes / resume_writes coordination
+    # ---------------------------------------------------------------------------
+
+    describe "pause/resume writes (RBLD-03)" do
+      test "pause_writes blocks event processing — checkpoint does not advance" do
+        projector_name = unique_projector_name()
+
+        # Start in live mode with default ES handler
+        pid = start_supervised!({ProjectorGenServer, es_config(projector_name)})
+        Mox.allow(Snap.MockHTTPClient, self(), pid)
+
+        # Append and wait for the first event to be processed
+        append_event("BeforePause", 0)
+
+        assert :ok =
+                 wait_until(3000, fn ->
+                   cp = get_checkpoint(projector_name)
+                   cp != nil && cp.last_position == 0
+                 end)
+
+        # Pause the GenServer
+        assert :ok = GenServer.call(pid, :pause_writes)
+
+        # Append a second event while paused
+        append_event("DuringPause", 1)
+
+        # Give the GenServer time to receive the message (it should NOT process it)
+        Process.sleep(150)
+
+        # Checkpoint must NOT have advanced past position 0
+        checkpoint = get_checkpoint(projector_name)
+        assert checkpoint != nil
+
+        assert checkpoint.last_position == 0,
+               "Expected checkpoint to stay at 0 while paused, got: #{inspect(checkpoint.last_position)}"
+      end
+
+      test "resume_writes sends :load_checkpoint and clears writes_paused flag" do
+        projector_name = unique_projector_name()
+
+        pid = start_supervised!({ProjectorGenServer, es_config(projector_name)})
+        Mox.allow(Snap.MockHTTPClient, self(), pid)
+
+        # Pause first
+        assert :ok = GenServer.call(pid, :pause_writes)
+
+        # Resume — should return :ok synchronously
+        assert :ok = GenServer.call(pid, :resume_writes)
+
+        # After resume, append an event and verify the GenServer resubscribes
+        # and processes it (proves the GenServer is alive and consuming again).
+        # The load_checkpoint will create a new subscription from -1 (no checkpoint yet).
+        append_event("AfterResume", 0)
+
+        assert :ok =
+                 wait_until(3000, fn ->
+                   cp = get_checkpoint(projector_name)
+                   cp != nil && cp.last_position == 0
+                 end)
+
+        checkpoint = get_checkpoint(projector_name)
+        assert checkpoint != nil
+        assert checkpoint.last_position == 0
+        assert checkpoint.halted == false
+      end
+    end
+
+    # ---------------------------------------------------------------------------
     # Test 6 (OBSV-01): OTel span attribute helper es_span_attrs returns correct map
     # ---------------------------------------------------------------------------
 

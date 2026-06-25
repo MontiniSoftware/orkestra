@@ -73,6 +73,7 @@ defmodule Orkestra.Projector.GenServer do
           subscription_ref: reference() | nil,
           attempts: non_neg_integer(),
           halted: boolean(),
+          writes_paused: boolean(),
           last_seen_position: non_neg_integer() | nil,
           rebuild_total: non_neg_integer() | nil,
           rebuild_events_replayed: non_neg_integer(),
@@ -120,6 +121,7 @@ defmodule Orkestra.Projector.GenServer do
       subscription_ref: nil,
       attempts: 0,
       halted: false,
+      writes_paused: false,
       last_seen_position: nil,
       rebuild_total: Map.get(config, :rebuild_total, nil),
       rebuild_events_replayed: 0,
@@ -139,6 +141,38 @@ defmodule Orkestra.Projector.GenServer do
     end
 
     {:ok, state}
+  end
+
+  @doc false
+  @impl GenServer
+  def handle_call(:pause_writes, _from, state) do
+    Logger.info("Projector writes paused for rebuild",
+      projector: state.projector_name,
+      orkestra: :projector
+    )
+
+    {:reply, :ok, %{state | writes_paused: true}}
+  end
+
+  @doc false
+  @impl GenServer
+  def handle_call(:resume_writes, _from, state) do
+    # Unsubscribe from the old subscription if active (RBLD-03)
+    if state.subscription_ref && function_exported?(state.event_store, :unsubscribe, 1) do
+      state.event_store.unsubscribe(state.subscription_ref)
+    end
+
+    Logger.info("Projector writes resumed — resubscribing from checkpoint",
+      projector: state.projector_name,
+      orkestra: :projector
+    )
+
+    # Trigger checkpoint reload which will resubscribe from the current
+    # (reset) checkpoint position. The Mix task resets the checkpoint to -1
+    # before calling :resume_writes, so the GenServer replays from 0.
+    send(self(), :load_checkpoint)
+
+    {:reply, :ok, %{state | writes_paused: false, subscription_ref: nil, es_buffer: [], es_mode: :live}}
   end
 
   @doc false
@@ -222,6 +256,15 @@ defmodule Orkestra.Projector.GenServer do
     )
 
     {:noreply, %{state | last_seen_position: position}}
+  end
+
+  # Discard events when writes are paused for rebuild (RBLD-03).
+  # Events accumulate in the mailbox but are not processed. After resume,
+  # the GenServer resubscribes from the reset checkpoint and replays everything.
+  @doc false
+  @impl GenServer
+  def handle_info(%{global_position: _position} = _event, %{writes_paused: true} = state) do
+    {:noreply, state}
   end
 
   # Normal event processing

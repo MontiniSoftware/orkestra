@@ -75,7 +75,10 @@ defmodule Orkestra.Projector.GenServer do
           halted: boolean(),
           last_seen_position: non_neg_integer() | nil,
           rebuild_total: non_neg_integer() | nil,
-          rebuild_events_replayed: non_neg_integer()
+          rebuild_events_replayed: non_neg_integer(),
+          es_buffer: list(),
+          es_batch_size: non_neg_integer(),
+          es_mode: :live | :catching_up
         }
 
   # ---------------------------------------------------------------------------
@@ -119,7 +122,10 @@ defmodule Orkestra.Projector.GenServer do
       halted: false,
       last_seen_position: nil,
       rebuild_total: Map.get(config, :rebuild_total, nil),
-      rebuild_events_replayed: 0
+      rebuild_events_replayed: 0,
+      es_buffer: [],
+      es_batch_size: Map.get(config, :es_batch_size, 500),
+      es_mode: if(Map.get(config, :rebuild_total), do: :catching_up, else: :live)
     }
 
     # Defer all Repo calls — enqueue :load_checkpoint so the test can call

@@ -61,6 +61,18 @@ defmodule Orkestra.Telemetry do
     }
   end
 
+  @doc "Creates span attributes for an ES storage operation (single-doc or bulk)."
+  @spec es_span_attrs(String.t(), String.t(), atom(), non_neg_integer() | nil) :: map()
+  def es_span_attrs(projector_name, index, engine, doc_count \\ nil) do
+    base = %{
+      "orkestra.projector.name" => projector_name,
+      "es.index" => index,
+      "es.engine" => to_string(engine)
+    }
+
+    if doc_count, do: Map.put(base, "es.doc_count", doc_count), else: base
+  end
+
   @doc "Creates span attributes from Orkestra metadata."
   def metadata_attrs(nil), do: %{}
 

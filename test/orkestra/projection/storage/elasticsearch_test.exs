@@ -43,7 +43,9 @@ if Code.ensure_loaded?(Snap.Cluster) do
           {:ok, %{"order_id" => "order-123", "status" => "placed"}, "order-123"}
         end
 
-        result = Elasticsearch.write("test_projector", %{type: "OrderPlaced"}, 1, handler: handler)
+        result =
+          Elasticsearch.write("test_projector", %{type: "OrderPlaced"}, 1, handler: handler)
+
         assert {:ok, %{action: :index, id: "order-123", doc: doc}} = result
         assert doc["order_id"] == "order-123"
         assert doc["status"] == "placed"
@@ -54,8 +56,11 @@ if Code.ensure_loaded?(Snap.Cluster) do
           {:ok, %{"order_id" => "order-123"}, "order-123"}
         end
 
-        {:ok, result1} = Elasticsearch.write("test_projector", %{type: "OrderPlaced"}, 1, handler: handler)
-        {:ok, result2} = Elasticsearch.write("test_projector", %{type: "OrderPlaced"}, 1, handler: handler)
+        {:ok, result1} =
+          Elasticsearch.write("test_projector", %{type: "OrderPlaced"}, 1, handler: handler)
+
+        {:ok, result2} =
+          Elasticsearch.write("test_projector", %{type: "OrderPlaced"}, 1, handler: handler)
 
         assert result1.id == result2.id
         assert result1.id == "order-123"
@@ -101,7 +106,12 @@ if Code.ensure_loaded?(Snap.Cluster) do
           })
 
         # Mock GET / for engine detection
-        expect(Snap.MockHTTPClient, :request, fn _cluster, :get, "/", _headers, _body, _opts ->
+        expect(Snap.MockHTTPClient, :request, fn _cluster,
+                                                 :get,
+                                                 "http://localhost:9200",
+                                                 _headers,
+                                                 _body,
+                                                 _opts ->
           {:ok, %Snap.HTTPClient.Response{status: 200, headers: [], body: es_response_body}}
         end)
 
@@ -135,7 +145,12 @@ if Code.ensure_loaded?(Snap.Cluster) do
             "name" => "es-node"
           })
 
-        expect(Snap.MockHTTPClient, :request, fn _cluster, :get, "/", _headers, _body, _opts ->
+        expect(Snap.MockHTTPClient, :request, fn _cluster,
+                                                 :get,
+                                                 "http://localhost:9200",
+                                                 _headers,
+                                                 _body,
+                                                 _opts ->
           {:ok, %Snap.HTTPClient.Response{status: 200, headers: [], body: es_response_body}}
         end)
 
@@ -159,7 +174,12 @@ if Code.ensure_loaded?(Snap.Cluster) do
       end
 
       test "defaults to :elasticsearch on connection failure" do
-        expect(Snap.MockHTTPClient, :request, fn _cluster, :get, "/", _headers, _body, _opts ->
+        expect(Snap.MockHTTPClient, :request, fn _cluster,
+                                                 :get,
+                                                 "http://localhost:9200",
+                                                 _headers,
+                                                 _body,
+                                                 _opts ->
           {:error, %Snap.HTTPClient.Error{reason: :econnrefused, origin: nil}}
         end)
 
@@ -193,7 +213,12 @@ if Code.ensure_loaded?(Snap.Cluster) do
             "version" => %{"number" => "8.15.0"}
           })
 
-        expect(Snap.MockHTTPClient, :request, fn _cluster, :get, "/", _headers, _body, _opts ->
+        expect(Snap.MockHTTPClient, :request, fn _cluster,
+                                                 :get,
+                                                 "http://localhost:9200",
+                                                 _headers,
+                                                 _body,
+                                                 _opts ->
           {:ok, %Snap.HTTPClient.Response{status: 200, headers: [], body: es_response_body}}
         end)
 
@@ -227,7 +252,12 @@ if Code.ensure_loaded?(Snap.Cluster) do
             "version" => %{"number" => "8.15.0"}
           })
 
-        expect(Snap.MockHTTPClient, :request, fn _cluster, :get, "/", _headers, _body, _opts ->
+        expect(Snap.MockHTTPClient, :request, fn _cluster,
+                                                 :get,
+                                                 "http://localhost:9200",
+                                                 _headers,
+                                                 _body,
+                                                 _opts ->
           {:ok, %Snap.HTTPClient.Response{status: 200, headers: [], body: es_response_body}}
         end)
 
@@ -260,7 +290,12 @@ if Code.ensure_loaded?(Snap.Cluster) do
             "version" => %{"number" => "8.15.0"}
           })
 
-        expect(Snap.MockHTTPClient, :request, fn _cluster, :get, "/", _headers, _body, _opts ->
+        expect(Snap.MockHTTPClient, :request, fn _cluster,
+                                                 :get,
+                                                 "http://localhost:9200",
+                                                 _headers,
+                                                 _body,
+                                                 _opts ->
           {:ok, %Snap.HTTPClient.Response{status: 200, headers: [], body: es_response_body}}
         end)
 
@@ -293,11 +328,11 @@ if Code.ensure_loaded?(Snap.Cluster) do
     describe "reset/2" do
       test "calls POST /{index}/_delete_by_query with match_all body" do
         expect(Snap.MockHTTPClient, :request, fn _cluster,
-                                                  :post,
-                                                  "/test_orders/_delete_by_query",
-                                                  _headers,
-                                                  body,
-                                                  _opts ->
+                                                 :post,
+                                                 "http://localhost:9200/test_orders/_delete_by_query",
+                                                 _headers,
+                                                 body,
+                                                 _opts ->
           decoded = Jason.decode!(body)
           assert decoded["query"]["match_all"] == %{}
 
@@ -338,7 +373,7 @@ if Code.ensure_loaded?(Snap.Cluster) do
           {:error, %Snap.HTTPClient.Error{reason: :econnrefused, origin: nil}}
         end)
 
-        assert {:error, {:reset_failed, :econnrefused}} =
+        assert {:error, {:reset_failed, %Snap.HTTPClient.Error{reason: :econnrefused}}} =
                  Elasticsearch.reset("test_projector",
                    cluster: Orkestra.Test.ESCluster,
                    index: "test_orders"

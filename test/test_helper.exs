@@ -33,10 +33,18 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL.Sandbox) do
 end
 
 if Code.ensure_loaded?(Snap.Cluster) do
+  # Configure the test ES cluster. Orkestra.Test.ESHTTPAdapter wraps
+  # Snap.MockHTTPClient so that child_spec/1 returns :skip (avoiding Mox
+  # inter-process ownership issues in the Supervisor init callback) while
+  # delegating all request/6 calls to the Mox mock for per-test expectations.
   Application.put_env(:orkestra, Orkestra.Test.ESCluster,
     url: "http://localhost:9200",
-    http_client_adapter: Snap.MockHTTPClient
+    http_client_adapter: Orkestra.Test.ESHTTPAdapter
   )
+
+  # Start the test cluster once for the entire test suite. Tests set per-test
+  # Mox expectations on Snap.MockHTTPClient to control HTTP responses.
+  Orkestra.Test.ESCluster.start_link()
 end
 
 ExUnit.start(exclude: [:postgres, :elasticsearch, :integration])

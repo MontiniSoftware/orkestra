@@ -19,9 +19,9 @@ Requirements for Elasticsearch / OpenSearch Projection Adapter. Each maps to roa
 
 ### Bulk Indexing
 
-- [ ] **BULK-01**: During catch-up/rebuild, adapter buffers events and flushes via Snap.Bulk in configurable batch size
-- [ ] **BULK-02**: In live mode, adapter writes single documents immediately via Snap.Document
-- [ ] **BULK-03**: Bulk response body inspected per-item for partial failures with structured error reporting
+- [x] **BULK-01**: During catch-up/rebuild, adapter buffers events and flushes via Snap.Bulk in configurable batch size
+- [x] **BULK-02**: In live mode, adapter writes single documents immediately via Snap.Document
+- [x] **BULK-03**: Bulk response body inspected per-item for partial failures with structured error reporting
 
 ### Rebuild
 
@@ -36,8 +36,8 @@ Requirements for Elasticsearch / OpenSearch Projection Adapter. Each maps to roa
 
 ### Observability
 
-- [ ] **OBSV-01**: OTel spans emitted for ES operations (index, bulk, search, rebuild) with ES-specific attributes
-- [ ] **OBSV-02**: Telemetry metrics for bulk batch size, bulk duration, and rebuild progress
+- [x] **OBSV-01**: OTel spans emitted for ES operations (index, bulk, search, rebuild) with ES-specific attributes
+- [x] **OBSV-02**: Telemetry metrics for bulk batch size, bulk duration, and rebuild progress
 
 ### MCP
 
@@ -83,16 +83,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ADPT-05 | Phase 8 | Pending |
 | ADPT-06 | Phase 6 | Complete |
 | ADPT-07 | Phase 8 | Pending |
-| BULK-01 | Phase 7 | Pending |
-| BULK-02 | Phase 7 | Pending |
-| BULK-03 | Phase 7 | Pending |
+| BULK-01 | Phase 7 | Complete |
+| BULK-02 | Phase 7 | Complete |
+| BULK-03 | Phase 7 | Complete |
 | RBLD-01 | Phase 9 | Pending |
 | RBLD-02 | Phase 9 | Pending |
 | RBLD-03 | Phase 9 | Pending |
 | QDSL-01 | Phase 10 | Pending |
 | QDSL-02 | Phase 10 | Pending |
-| OBSV-01 | Phase 7 | Pending |
-| OBSV-02 | Phase 7 | Pending |
+| OBSV-01 | Phase 7 | Complete |
+| OBSV-02 | Phase 7 | Complete |
 | MCP-01 | Phase 11 | Pending |
 | MCP-02 | Phase 11 | Pending |
 

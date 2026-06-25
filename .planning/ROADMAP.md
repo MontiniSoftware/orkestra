@@ -58,9 +58,9 @@ Plans:
   3. A bulk response containing per-item failures is detected, reported with structured error detail, and does not silently advance the checkpoint
   4. OTel spans are emitted for single-doc write, bulk flush, with ES-specific attributes (index name, doc count, engine)
   5. Telemetry events expose bulk batch size, bulk flush duration, and rebuild replay progress
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
-- [ ] 07-01-PLAN.md — ES commit path implementation (GenServer state, live write, bulk flush, OTel, telemetry)
+- [x] 07-01-PLAN.md — ES commit path implementation (GenServer state, live write, bulk flush, OTel, telemetry)
 - [ ] 07-02-PLAN.md — ES GenServer integration tests (BULK-01, BULK-02, BULK-03, OBSV-01, OBSV-02)
 
 ### Phase 8: Projector Macro DSL for Elasticsearch
@@ -119,7 +119,7 @@ Note: Phase 10 depends only on Phase 6 (independent of write path) but is sequen
 | 4. Telemetry & Observability | v1.0 | 2/2 | Complete | 2026-06-24 |
 | 5. MCP Integration and Query Helpers | v1.0 | 3/3 | Complete | 2026-06-24 |
 | 6. ES Storage Adapter Foundation | v1.1 | 2/2 | Complete   | 2026-06-25 |
-| 7. GenServer ES Commit Path and Batch Indexing | v1.1 | 0/2 | Planned | - |
+| 7. GenServer ES Commit Path and Batch Indexing | v1.1 | 1/2 | In Progress|  |
 | 8. Projector Macro DSL for Elasticsearch | v1.1 | 0/? | Not started | - |
 | 9. Zero-Downtime Rebuild and Mix Task | v1.1 | 0/? | Not started | - |
 | 10. ES Query DSL Builder | v1.1 | 0/? | Not started | - |

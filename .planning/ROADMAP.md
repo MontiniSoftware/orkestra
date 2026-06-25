@@ -85,7 +85,10 @@ Plans:
   2. Search queries against the projection alias return results throughout the entire rebuild (no downtime window)
   3. Live writes are paused during the alias swap window to prevent documents landing on the old index; the projector resumes normal operation after the swap completes
   4. If the rebuild process crashes mid-replay, re-running the Mix task starts a fresh rebuild from position zero (no orphan index accumulation)
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 09-01-PLAN.md — Extend __projection_config__/0 with ES fields and add GenServer pause/resume writes (RBLD-03)
+- [ ] 09-02-PLAN.md — Mix task implementation and integration tests (RBLD-01, RBLD-02, RBLD-03)
 
 ### Phase 10: ES Query DSL Builder
 **Goal**: A developer can compose Elasticsearch queries in idiomatic Elixir using a pipe-based DSL, and optionally scaffold a generated `ES.Queries` module per projection with common search operations
@@ -123,6 +126,6 @@ Note: Phase 10 depends only on Phase 6 (independent of write path) but is sequen
 | 6. ES Storage Adapter Foundation | v1.1 | 2/2 | Complete   | 2026-06-25 |
 | 7. GenServer ES Commit Path and Batch Indexing | v1.1 | 2/2 | Complete   | 2026-06-25 |
 | 8. Projector Macro DSL for Elasticsearch | v1.1 | 1/1 | Complete   | 2026-06-25 |
-| 9. Zero-Downtime Rebuild and Mix Task | v1.1 | 0/? | Not started | - |
+| 9. Zero-Downtime Rebuild and Mix Task | v1.1 | 0/2 | Planning complete | - |
 | 10. ES Query DSL Builder | v1.1 | 0/? | Not started | - |
 | 11. MCP Generator and Introspection | v1.1 | 0/? | Not started | - |

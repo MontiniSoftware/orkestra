@@ -27,7 +27,7 @@ Requirements for Elasticsearch / OpenSearch Projection Adapter. Each maps to roa
 
 - [ ] **RBLD-01**: Zero-downtime rebuild creates new index, replays events, atomically swaps alias, cleans up old index
 - [ ] **RBLD-02**: `mix orkestra.projection.es.rebuild` Mix task triggers full rebuild with alias swap
-- [ ] **RBLD-03**: Live writes paused during alias swap to prevent race conditions
+- [x] **RBLD-03**: Live writes paused during alias swap to prevent race conditions
 
 ### Query DSL
 
@@ -88,7 +88,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BULK-03 | Phase 7 | Complete |
 | RBLD-01 | Phase 9 | Pending |
 | RBLD-02 | Phase 9 | Pending |
-| RBLD-03 | Phase 9 | Pending |
+| RBLD-03 | Phase 9 | Complete |
 | QDSL-01 | Phase 10 | Pending |
 | QDSL-02 | Phase 10 | Pending |
 | OBSV-01 | Phase 7 | Complete |

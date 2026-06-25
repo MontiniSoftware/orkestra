@@ -43,9 +43,9 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
   3. A `write/4` call returns an `es_op` descriptor map with `:action`, `:id`, and `:doc` keys; the document is indexed as a full-document upsert using a deterministic ID
   4. Authentication works with both Basic Auth credentials and an API key without code changes to the projector
   5. Engine divergences between ES 8.x and OpenSearch 2.x are handled transparently via runtime detection at startup
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
-- [ ] 06-01-PLAN.md — Dependencies, API key auth module, and ES test infrastructure
+- [x] 06-01-PLAN.md — Dependencies, API key auth module, and ES test infrastructure
 - [ ] 06-02-PLAN.md — ES/OpenSearch storage adapter (write/4, reset/2, engine detection, index management)
 
 ### Phase 7: GenServer ES Commit Path and Batch Indexing
@@ -116,7 +116,7 @@ Note: Phase 10 depends only on Phase 6 (independent of write path) but is sequen
 | 3. DSL, Supervisor, Mix Tasks, and Config | v1.0 | 2/2 | Complete | 2026-06-24 |
 | 4. Telemetry & Observability | v1.0 | 2/2 | Complete | 2026-06-24 |
 | 5. MCP Integration and Query Helpers | v1.0 | 3/3 | Complete | 2026-06-24 |
-| 6. ES Storage Adapter Foundation | v1.1 | 0/2 | Planning | - |
+| 6. ES Storage Adapter Foundation | v1.1 | 1/2 | In Progress|  |
 | 7. GenServer ES Commit Path and Batch Indexing | v1.1 | 0/? | Not started | - |
 | 8. Projector Macro DSL for Elasticsearch | v1.1 | 0/? | Not started | - |
 | 9. Zero-Downtime Rebuild and Mix Task | v1.1 | 0/? | Not started | - |

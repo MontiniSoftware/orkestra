@@ -15,6 +15,7 @@ defmodule OrkestraMcp.Server do
   component(OrkestraMcp.Tools.GenProjection)
   component(OrkestraMcp.Tools.GenReadModel)
   component(OrkestraMcp.Tools.GenQueries)
+  component(OrkestraMcp.Tools.GenEsQueries)
 
   # Resources
   component(OrkestraMcp.Resources.ListCommands)

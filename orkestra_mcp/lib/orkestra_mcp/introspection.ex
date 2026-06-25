@@ -123,26 +123,65 @@ defmodule OrkestraMcp.Introspection do
   end
 
   defp detect_projectors(acc, content) do
-    case Regex.run(~r/use\s+Orkestra\.Projector,\s*repo:\s*([\w.]+)/, content) do
-      [_, repo_module] ->
-        case extract_module_name(content) do
-          nil ->
-            acc
+    if content =~ ~r/use\s+Orkestra\.Projector/ do
+      case extract_module_name(content) do
+        nil ->
+          acc
 
-          module_name ->
-            events = extract_projected_events(content)
-            entry = %{module: module_name, repo: repo_module, events: events}
-            %{acc | projectors: acc.projectors ++ [entry]}
-        end
+        module_name ->
+          repo = extract_option(content, "repo")
+          backend = extract_backend(content)
+          cluster = extract_option(content, "cluster")
+          index_name = extract_string_option(content, "index")
+          events = extract_projected_events_all(content)
 
-      nil ->
-        acc
+          entry = %{
+            module: module_name,
+            repo: repo,
+            backend: backend,
+            cluster: cluster,
+            index: index_name,
+            events: events
+          }
+
+          %{acc | projectors: acc.projectors ++ [entry]}
+      end
+    else
+      acc
     end
   end
 
-  defp extract_projected_events(content) do
-    Regex.scan(~r/project\s+([\w.]+),/, content)
-    |> Enum.map(fn [_, event_module] -> event_module end)
+  defp extract_option(content, key) do
+    case Regex.run(~r/#{key}:\s*([\w.]+)/, content) do
+      [_, value] -> value
+      nil -> nil
+    end
+  end
+
+  defp extract_backend(content) do
+    case Regex.run(~r/backend:\s*:(\w+)/, content) do
+      [_, "elasticsearch"] -> :elasticsearch
+      _ -> :postgres
+    end
+  end
+
+  defp extract_string_option(content, key) do
+    case Regex.run(~r/#{key}:\s*"([^"]+)"/, content) do
+      [_, value] -> value
+      nil -> nil
+    end
+  end
+
+  defp extract_projected_events_all(content) do
+    postgres_events =
+      Regex.scan(~r/project\s+([\w.]+),/, content)
+      |> Enum.map(fn [_, e] -> e end)
+
+    es_events =
+      Regex.scan(~r/project_es\s+([\w.]+),/, content)
+      |> Enum.map(fn [_, e] -> e end)
+
+    Enum.uniq(postgres_events ++ es_events)
   end
 
   defp extract_module_name(content) do
@@ -252,7 +291,15 @@ defmodule OrkestraMcp.Introspection do
     lines =
       lines ++
         Enum.flat_map(projectors, fn proj ->
-          header = "#{proj.module} (projector)"
+          header =
+            case Map.get(proj, :backend, :postgres) do
+              :elasticsearch ->
+                "#{proj.module} (projector, backend: elasticsearch, index: #{proj.index})"
+
+              _ ->
+                "#{proj.module} (projector, backend: postgres)"
+            end
+
           event_lines = Enum.map(proj.events, fn evt -> "  -> #{evt} (projected_event)" end)
           [header | event_lines] ++ [""]
         end)

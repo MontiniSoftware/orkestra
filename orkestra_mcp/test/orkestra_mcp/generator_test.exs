@@ -242,6 +242,78 @@ defmodule OrkestraMcp.GeneratorTest do
     end
   end
 
+  describe "gen_es_projection/5" do
+    test "generates valid ES projector source with required attributes" do
+      events = ["MyApp.Events.OrderPlaced", "MyApp.Events.OrderCancelled"]
+
+      {source, _file_path} =
+        Generator.gen_es_projection(
+          "MyApp.Orders.OrderESProjector",
+          "MyApp.OrderProjection.Repo",
+          "MyApp.ESCluster",
+          "orders",
+          events
+        )
+
+      assert source =~ "use Orkestra.Projector"
+      assert source =~ "backend: :elasticsearch"
+      assert source =~ "repo: MyApp.OrderProjection.Repo"
+      assert source =~ "cluster: MyApp.ESCluster"
+      assert source =~ ~s(index: "orders")
+      assert source =~ "project_es MyApp.Events.OrderPlaced"
+      assert source =~ "@impl true"
+      assert source =~ "def index_mapping"
+      assert {:ok, _} = Code.string_to_quoted(source)
+    end
+
+    test "generates placeholder clause with TODO when events list is empty" do
+      {source, _file_path} =
+        Generator.gen_es_projection(
+          "MyApp.Orders.OrderESProjector",
+          "MyApp.OrderProjection.Repo",
+          "MyApp.ESCluster",
+          "orders",
+          []
+        )
+
+      assert source =~ "TODO"
+      assert source =~ "project_es"
+      assert {:ok, _} = Code.string_to_quoted(source)
+    end
+
+    test "returns correct file_path via Naming.module_to_file_path" do
+      {_source, file_path} =
+        Generator.gen_es_projection(
+          "MyApp.Orders.OrderESProjector",
+          "MyApp.OrderProjection.Repo",
+          "MyApp.ESCluster",
+          "orders",
+          []
+        )
+
+      assert file_path == Naming.module_to_file_path("MyApp.Orders.OrderESProjector")
+      assert file_path == "lib/my_app/orders/order_es_projector.ex"
+    end
+
+    test "generates one project_es clause per event when multiple events given" do
+      events = ["MyApp.Events.OrderPlaced", "MyApp.Events.OrderCancelled", "MyApp.Events.OrderShipped"]
+
+      {source, _file_path} =
+        Generator.gen_es_projection(
+          "MyApp.Orders.OrderESProjector",
+          "MyApp.OrderProjection.Repo",
+          "MyApp.ESCluster",
+          "orders",
+          events
+        )
+
+      assert source =~ "project_es MyApp.Events.OrderPlaced"
+      assert source =~ "project_es MyApp.Events.OrderCancelled"
+      assert source =~ "project_es MyApp.Events.OrderShipped"
+      assert {:ok, _} = Code.string_to_quoted(source)
+    end
+  end
+
   describe "module_to_table_name/1" do
     test "converts a multi-segment module to a pluralised table name" do
       assert Naming.module_to_table_name("MyApp.Orders.OrderReadModel") == "order_read_models"

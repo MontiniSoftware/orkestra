@@ -386,6 +386,66 @@ defmodule OrkestraMcp.Generator do
   end
 
   @doc """
+  Generates an ES Projector module. Returns `{source_code, file_path}`.
+
+  `events` is a list of event module name strings. If empty, generates a
+  placeholder `project_es` clause with a TODO comment.
+
+  The generated module uses `use Orkestra.Projector, backend: :elasticsearch`
+  with `project_es/2` handler clauses and an `index_mapping/0` scaffold.
+  """
+  def gen_es_projection(module_name, repo_module, cluster_module, index, events) do
+    project_es_clauses =
+      if events == [] do
+        """
+          project_es EventModule, fn _event, _position ->
+            # TODO: return {:ok, doc_map, document_id}, :skip, or {:error, reason}
+            {:ok, %{}, nil}
+          end
+        """
+        |> String.trim_trailing()
+      else
+        events
+        |> Enum.map_join("\n\n", fn event ->
+          """
+            project_es #{event}, fn _event, _position ->
+              # TODO: implement projection logic for #{event}
+              {:ok, %{}, nil}
+            end
+          """
+          |> String.trim_trailing()
+        end)
+      end
+
+    source = """
+    defmodule #{module_name} do
+      use Orkestra.Projector,
+        backend: :elasticsearch,
+        repo: #{repo_module},
+        cluster: #{cluster_module},
+        index: "#{index}",
+        event_store: Orkestra.EventStore.InMemory
+
+      @impl true
+      def index_mapping do
+        %{
+          "mappings" => %{
+            "properties" => %{
+              # TODO: define your index field mappings here, e.g.:
+              # "field_name" => %{"type" => "keyword"}
+            }
+          }
+        }
+      end
+
+    #{project_es_clauses}
+    end
+    """
+
+    {String.trim(source), Naming.module_to_file_path(module_name)}
+  end
+
+  @doc """
   Generates an ES Queries module with search/3, list/3, and get_by_id/3 helpers.
   Returns `{source_code, file_path}`.
 

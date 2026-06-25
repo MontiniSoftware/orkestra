@@ -41,7 +41,7 @@ Requirements for Elasticsearch / OpenSearch Projection Adapter. Each maps to roa
 
 ### MCP
 
-- [ ] **MCP-01**: `gen_es_projection` MCP tool scaffolds new ES projection modules
+- [x] **MCP-01**: `gen_es_projection` MCP tool scaffolds new ES projection modules
 - [x] **MCP-02**: ES projections surfaced in `domain_map` and `ListProjections` introspection resources
 
 ## Future Requirements
@@ -93,7 +93,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | QDSL-02 | Phase 10 | Complete |
 | OBSV-01 | Phase 7 | Complete |
 | OBSV-02 | Phase 7 | Complete |
-| MCP-01 | Phase 11 | Pending |
+| MCP-01 | Phase 11 | Complete |
 | MCP-02 | Phase 11 | Complete |
 
 **Coverage:**

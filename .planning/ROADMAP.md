@@ -110,10 +110,10 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Calling `gen_es_projection` in the MCP server generates a projector module with `index_mapping/0`, `document_id/1`, and `project_es/2` callbacks, a cluster config snippet, and a test stub using Snap's mock HTTP adapter
   2. `domain_map` and `ListProjections` include ES projections with their backend type, cluster, and index name alongside existing Postgres projections
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
 - [ ] 11-01-PLAN.md — gen_es_projection generator function, MCP tool, and server registration (MCP-01)
-- [ ] 11-02-PLAN.md — Introspection ES projector detection, domain_map annotation, and ListProjections update (MCP-02)
+- [x] 11-02-PLAN.md — Introspection ES projector detection, domain_map annotation, and ListProjections update (MCP-02)
 
 ## Progress
 
@@ -133,4 +133,4 @@ Note: Phase 10 depends only on Phase 6 (independent of write path) but is sequen
 | 8. Projector Macro DSL for Elasticsearch | v1.1 | 1/1 | Complete   | 2026-06-25 |
 | 9. Zero-Downtime Rebuild and Mix Task | v1.1 | 2/2 | Complete   | 2026-06-25 |
 | 10. ES Query DSL Builder | v1.1 | 2/2 | Complete   | 2026-06-25 |
-| 11. MCP Generator and Introspection | v1.1 | 0/2 | Planning   | - |
+| 11. MCP Generator and Introspection | v1.1 | 1/2 | In Progress|  |

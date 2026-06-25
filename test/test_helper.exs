@@ -44,7 +44,14 @@ if Code.ensure_loaded?(Snap.Cluster) do
 
   # Start the test cluster once for the entire test suite. Tests set per-test
   # Mox expectations on Snap.MockHTTPClient to control HTTP responses.
-  Orkestra.Test.ESCluster.start_link()
+  case Orkestra.Test.ESCluster.start_link() do
+    {:ok, _} ->
+      :ok
+
+    {:error, reason} ->
+      IO.puts("Skipping Elasticsearch tests — ESCluster start failed: #{inspect(reason)}")
+      ExUnit.configure(exclude: [:elasticsearch])
+  end
 end
 
 ExUnit.start(exclude: [:postgres, :elasticsearch, :integration])

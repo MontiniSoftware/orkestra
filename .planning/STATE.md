@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Elasticsearch / OpenSearch Projection Adapter
-status: verifying
+status: executing
 stopped_at: "Completed 09-01: __projection_config__/0 extended + GenServer pause/resume"
-last_updated: "2026-06-25T09:31:52.183Z"
+last_updated: "2026-06-25T12:33:51.783Z"
 last_activity: 2026-06-25
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 9
+  completed_plans: 8
   percent: 67
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-25)
 
 **Core value:** A developer can define a projection that consumes domain events and maintains a queryable read model — with safe rebuilds, in-order error handling, and per-projection migrations — without writing the plumbing themselves.
-**Current focus:** Phase 09 — zero-downtime-rebuild-and-mix-task
+**Current focus:** Phase 10 — es-query-dsl-builder
 
 ## Current Position
 
-Phase: 09 (zero-downtime-rebuild-and-mix-task) — EXECUTING
+Phase: 10 (es-query-dsl-builder) — EXECUTING
 Plan: 2 of 2
-Status: Phase complete — ready for verification
+Status: Ready to execute
 Last activity: 2026-06-25
 
-Progress: [██████████] 100%
+Progress: [█████████░] 89%
 
 ## Accumulated Context
 
@@ -66,6 +66,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-25T09:31:52.175Z
+Last session: 2026-06-25T12:33:51.777Z
 Stopped at: Completed 09-01: __projection_config__/0 extended + GenServer pause/resume
 Resume file: None

@@ -31,7 +31,7 @@ Requirements for Elasticsearch / OpenSearch Projection Adapter. Each maps to roa
 
 ### Query DSL
 
-- [ ] **QDSL-01**: Elixir query DSL module composes ES queries (bool, match, filter, range, aggs) with pipe syntax
+- [x] **QDSL-01**: Elixir query DSL module composes ES queries (bool, match, filter, range, aggs) with pipe syntax
 - [ ] **QDSL-02**: Optional generated ES.Queries module scaffolded per projection (like gen_queries for Postgres)
 
 ### Observability
@@ -89,7 +89,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RBLD-01 | Phase 9 | Complete |
 | RBLD-02 | Phase 9 | Complete |
 | RBLD-03 | Phase 9 | Complete |
-| QDSL-01 | Phase 10 | Pending |
+| QDSL-01 | Phase 10 | Complete |
 | QDSL-02 | Phase 10 | Pending |
 | OBSV-01 | Phase 7 | Complete |
 | OBSV-02 | Phase 7 | Complete |

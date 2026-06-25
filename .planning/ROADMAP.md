@@ -98,9 +98,9 @@ Plans:
   1. A developer can compose a bool query with must/filter/range clauses and aggregations using `|>` pipes and call `build/1` to produce a valid ES Query DSL map
   2. Running `gen_es_queries` produces an optional `ES.Queries` module with `search/3`, `list/3`, and `get_by_id/3` functions scoped to that projection's index
   3. Composing two queries via pipe never silently drops clauses (verified by test with overlapping must/filter additions)
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
-- [ ] 10-01-PLAN.md — ES Query DSL module with TDD (Orkestra.Projection.ES.Query)
+- [x] 10-01-PLAN.md — ES Query DSL module with TDD (Orkestra.Projection.ES.Query)
 - [ ] 10-02-PLAN.md — gen_es_queries/2 generator, GenEsQueries MCP tool, and server registration
 
 ### Phase 11: MCP Generator and Introspection
@@ -129,5 +129,5 @@ Note: Phase 10 depends only on Phase 6 (independent of write path) but is sequen
 | 7. GenServer ES Commit Path and Batch Indexing | v1.1 | 2/2 | Complete   | 2026-06-25 |
 | 8. Projector Macro DSL for Elasticsearch | v1.1 | 1/1 | Complete   | 2026-06-25 |
 | 9. Zero-Downtime Rebuild and Mix Task | v1.1 | 2/2 | Complete   | 2026-06-25 |
-| 10. ES Query DSL Builder | v1.1 | 0/2 | Not started | - |
+| 10. ES Query DSL Builder | v1.1 | 1/2 | In Progress|  |
 | 11. MCP Generator and Introspection | v1.1 | 0/? | Not started | - |

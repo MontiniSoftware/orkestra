@@ -76,31 +76,31 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ADPT-01 | — | Pending |
-| ADPT-02 | — | Pending |
-| ADPT-03 | — | Pending |
-| ADPT-04 | — | Pending |
-| ADPT-05 | — | Pending |
-| ADPT-06 | — | Pending |
-| ADPT-07 | — | Pending |
-| BULK-01 | — | Pending |
-| BULK-02 | — | Pending |
-| BULK-03 | — | Pending |
-| RBLD-01 | — | Pending |
-| RBLD-02 | — | Pending |
-| RBLD-03 | — | Pending |
-| QDSL-01 | — | Pending |
-| QDSL-02 | — | Pending |
-| OBSV-01 | — | Pending |
-| OBSV-02 | — | Pending |
-| MCP-01 | — | Pending |
-| MCP-02 | — | Pending |
+| ADPT-01 | Phase 6 | Pending |
+| ADPT-02 | Phase 6 | Pending |
+| ADPT-03 | Phase 6 | Pending |
+| ADPT-04 | Phase 6 | Pending |
+| ADPT-05 | Phase 8 | Pending |
+| ADPT-06 | Phase 6 | Pending |
+| ADPT-07 | Phase 8 | Pending |
+| BULK-01 | Phase 7 | Pending |
+| BULK-02 | Phase 7 | Pending |
+| BULK-03 | Phase 7 | Pending |
+| RBLD-01 | Phase 9 | Pending |
+| RBLD-02 | Phase 9 | Pending |
+| RBLD-03 | Phase 9 | Pending |
+| QDSL-01 | Phase 10 | Pending |
+| QDSL-02 | Phase 10 | Pending |
+| OBSV-01 | Phase 7 | Pending |
+| OBSV-02 | Phase 7 | Pending |
+| MCP-01 | Phase 11 | Pending |
+| MCP-02 | Phase 11 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 19 total
-- Mapped to phases: 0
-- Unmapped: 19
+- Mapped to phases: 19
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-25*
-*Last updated: 2026-06-25 after initial definition*
+*Last updated: 2026-06-25 — traceability populated after roadmap creation*

@@ -39,6 +39,9 @@ defmodule Orkestra.MixProject do
       {:opentelemetry_process_propagator, "~> 0.3", optional: true},
       {:postgrex, "~> 0.18", optional: true},
       {:spear, "~> 1.4", optional: true},
+      {:snap, "~> 0.16", optional: true},
+      {:finch, "~> 0.17", optional: true},
+      {:mox, "~> 1.0", only: :test},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false}
     ]
   end

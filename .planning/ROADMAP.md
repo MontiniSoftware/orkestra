@@ -25,7 +25,7 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 **Milestone Goal:** Add an ES/OpenSearch storage adapter to the existing projection subsystem, with batch indexing, zero-downtime alias-swap rebuild, and an Elixir query DSL — so a developer can point a projector at Elasticsearch the same way they point one at Postgres.
 
 - [x] **Phase 6: ES Storage Adapter Foundation** - Implement the `Storage` behaviour for ES/OpenSearch with engine detection, auth, idempotent writes, and explicit index mapping management (completed 2026-06-25)
-- [ ] **Phase 7: GenServer ES Commit Path and Batch Indexing** - Wire the ES write path in the projector GenServer, add batch accumulation for catch-up mode, and instrument all ES operations with OTel spans and telemetry metrics
+- [x] **Phase 7: GenServer ES Commit Path and Batch Indexing** - Wire the ES write path in the projector GenServer, add batch accumulation for catch-up mode, and instrument all ES operations with OTel spans and telemetry metrics (completed 2026-06-25)
 - [ ] **Phase 8: Projector Macro DSL for Elasticsearch** - Add `backend: :elasticsearch`, `project_es/2`, and ES-specific options to `use Orkestra.Projector` without regressing Postgres projectors
 - [ ] **Phase 9: Zero-Downtime Rebuild and Mix Task** - Implement versioned index creation, alias swap, live-write pause, and the `mix orkestra.projection.es.rebuild` task
 - [ ] **Phase 10: ES Query DSL Builder** - Deliver a pipe-based composable ES query builder and optional generated `ES.Queries` module per projection
@@ -58,10 +58,10 @@ Plans:
   3. A bulk response containing per-item failures is detected, reported with structured error detail, and does not silently advance the checkpoint
   4. OTel spans are emitted for single-doc write, bulk flush, with ES-specific attributes (index name, doc count, engine)
   5. Telemetry events expose bulk batch size, bulk flush duration, and rebuild replay progress
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 07-01-PLAN.md — ES commit path implementation (GenServer state, live write, bulk flush, OTel, telemetry)
-- [ ] 07-02-PLAN.md — ES GenServer integration tests (BULK-01, BULK-02, BULK-03, OBSV-01, OBSV-02)
+- [x] 07-02-PLAN.md — ES GenServer integration tests (BULK-01, BULK-02, BULK-03, OBSV-01, OBSV-02)
 
 ### Phase 8: Projector Macro DSL for Elasticsearch
 **Goal**: A developer can write `use Orkestra.Projector, backend: :elasticsearch` with a `project_es/2` macro and ES-specific options, and the generated `child_spec/1` wires the ES storage adapter automatically without any changes to existing Postgres projectors
@@ -119,7 +119,7 @@ Note: Phase 10 depends only on Phase 6 (independent of write path) but is sequen
 | 4. Telemetry & Observability | v1.0 | 2/2 | Complete | 2026-06-24 |
 | 5. MCP Integration and Query Helpers | v1.0 | 3/3 | Complete | 2026-06-24 |
 | 6. ES Storage Adapter Foundation | v1.1 | 2/2 | Complete   | 2026-06-25 |
-| 7. GenServer ES Commit Path and Batch Indexing | v1.1 | 1/2 | In Progress|  |
+| 7. GenServer ES Commit Path and Batch Indexing | v1.1 | 2/2 | Complete   | 2026-06-25 |
 | 8. Projector Macro DSL for Elasticsearch | v1.1 | 0/? | Not started | - |
 | 9. Zero-Downtime Rebuild and Mix Task | v1.1 | 0/? | Not started | - |
 | 10. ES Query DSL Builder | v1.1 | 0/? | Not started | - |

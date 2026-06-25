@@ -17,6 +17,13 @@ defmodule Orkestra.Projection.Storage do
   Do not return a function or closure from `write/4` — that would bind the Repo
   at call time, preventing the caller from choosing the transaction boundary.
 
+  ## init/1
+
+  Called once at adapter startup (Phase 7 GenServer). Allows adapters to perform
+  one-time initialisation such as connection checks, schema creation, and index
+  setup. Returns `{:ok, state}` where `state` is an adapter-defined map passed
+  to subsequent callbacks, or `{:error, reason}` if initialisation fails.
+
   ## reset/2
 
   Clears all read-model state for a given projector. Used during projector rebuild
@@ -32,6 +39,25 @@ defmodule Orkestra.Projection.Storage do
 
   @typedoc "Options passed through to the adapter module."
   @type opts :: keyword()
+
+  @doc """
+  Initialises the adapter at projector startup.
+
+  Called once by the Phase 7 GenServer before any calls to `write/4` or
+  `reset/2`. Implementations should perform any one-time setup such as
+  detecting the storage engine, ensuring schemas/indexes exist, and
+  validating configuration.
+
+  Returns `{:ok, state}` where `state` is an adapter-specific map that is
+  threaded through to subsequent adapter calls via the `opts` mechanism,
+  or `{:error, reason}` if initialisation fails fatally.
+  """
+  @callback init(opts()) :: {:ok, map()} | {:error, term()}
+
+  # init/1 is optional: adapters that need one-time setup (e.g. ES index
+  # creation) implement it; adapters managed externally (e.g. Postgres with
+  # separate Ecto migrations) may omit it.
+  @optional_callbacks init: 1
 
   @typedoc """
   An opaque write-operations descriptor returned by `write/4`.

@@ -87,6 +87,7 @@ if Code.ensure_loaded?(Snap.Cluster) do
     Returns `{:ok, %{cluster: cluster, index: index, engine: engine}}` or
     `{:error, reason}` if index creation fails.
     """
+    @impl true
     @spec init(keyword()) :: {:ok, map()} | {:error, term()}
     def init(opts) do
       cluster = Keyword.fetch!(opts, :cluster)
@@ -101,13 +102,6 @@ if Code.ensure_loaded?(Snap.Cluster) do
       end
     end
 
-    @impl true
-    @spec write(
-            Orkestra.Projection.Storage.projector_name(),
-            Orkestra.Projection.Storage.event(),
-            non_neg_integer(),
-            Orkestra.Projection.Storage.opts()
-          ) :: {:ok, map()} | {:error, term()}
     @doc """
     Returns a write descriptor for applying `event` to the Elasticsearch read model.
 
@@ -123,6 +117,13 @@ if Code.ensure_loaded?(Snap.Cluster) do
 
     **Does not perform any HTTP calls.** The calling GenServer owns execution.
     """
+    @impl true
+    @spec write(
+            Orkestra.Projection.Storage.projector_name(),
+            Orkestra.Projection.Storage.event(),
+            non_neg_integer(),
+            Orkestra.Projection.Storage.opts()
+          ) :: {:ok, map()} | {:error, term()}
     def write(projector_name, event, position, opts) do
       handler = Keyword.fetch!(opts, :handler)
 
@@ -138,11 +139,6 @@ if Code.ensure_loaded?(Snap.Cluster) do
       end
     end
 
-    @impl true
-    @spec reset(
-            Orkestra.Projection.Storage.projector_name(),
-            Orkestra.Projection.Storage.opts()
-          ) :: :ok | {:error, term()}
     @doc """
     Deletes all documents in the projection index via `_delete_by_query`.
 
@@ -150,12 +146,22 @@ if Code.ensure_loaded?(Snap.Cluster) do
     operation intended for projector rebuild (Phase 9). After `reset/2`, a
     subsequent replay of the event stream will rebuild the read model.
 
+    Idempotent: returns `:ok` even when the index does not exist yet
+    (e.g. on first start before `init/1` has run, or after manual index
+    deletion). An `index_not_found_exception` from ES/OpenSearch is treated
+    as a no-op — the index is already empty.
+
     Requires opts:
     - `:cluster` — the `Snap.Cluster` module
     - `:index` — the index name string
 
     Returns `:ok` on success or `{:error, {:reset_failed, reason}}` on failure.
     """
+    @impl true
+    @spec reset(
+            Orkestra.Projection.Storage.projector_name(),
+            Orkestra.Projection.Storage.opts()
+          ) :: :ok | {:error, term()}
     def reset(_projector_name, opts) do
       cluster = Keyword.fetch!(opts, :cluster)
       index = Keyword.fetch!(opts, :index)
@@ -163,8 +169,15 @@ if Code.ensure_loaded?(Snap.Cluster) do
       body = %{"query" => %{"match_all" => %{}}}
 
       case Snap.post(cluster, "/#{index}/_delete_by_query", body) do
-        {:ok, _} -> :ok
-        {:error, reason} -> {:error, {:reset_failed, reason}}
+        {:ok, _} ->
+          :ok
+
+        {:error, %Snap.ResponseError{type: "index_not_found_exception"}} ->
+          # Index does not exist — reset is a no-op (state is already empty).
+          :ok
+
+        {:error, reason} ->
+          {:error, {:reset_failed, reason}}
       end
     end
 
@@ -173,29 +186,34 @@ if Code.ensure_loaded?(Snap.Cluster) do
     # -------------------------------------------------------------------------
 
     # Detects the ES/OpenSearch engine by calling GET / on the cluster.
-    # Snap.get/2 validates paths and rejects "/" (empty segment), so we bypass
-    # path validation and call the HTTPClient directly with the full root URL.
-    # Defaults to :elasticsearch on any connection failure (T-06-05 mitigation).
+    # Snap.Request.request/7 validates paths and rejects "/" because the URI
+    # split produces an empty segment. We bypass path validation by calling
+    # auth.sign/5 and Snap.HTTPClient.request/6 directly — this keeps full
+    # authentication (API key or Basic Auth) while avoiding the path check.
+    # Defaults to :elasticsearch on any connection or auth failure (T-06-05).
     defp detect_engine(cluster) do
       config = cluster.config()
       json_library = cluster.json_library()
       base_url = Keyword.fetch!(config, :url)
+      auth = Keyword.get(config, :auth, Snap.Auth.Plain)
 
-      result = Snap.HTTPClient.request(cluster, :get, base_url, [], nil)
+      default_headers = [{"content-type", "application/json"}, {"accept", "application/json"}]
 
-      case result do
-        {:ok, %Snap.HTTPClient.Response{status: 200, body: body}} ->
-          case json_library.decode(body) do
-            {:ok, %{"version" => %{"distribution" => "opensearch"}}} ->
-              {:ok, :opensearch}
+      with {:ok, {method, signed_url, signed_headers, signed_body}} <-
+             auth.sign(config, :get, base_url, default_headers, nil),
+           {:ok, %Snap.HTTPClient.Response{status: 200, body: body}} <-
+             Snap.HTTPClient.request(cluster, method, signed_url, signed_headers, signed_body) do
+        case json_library.decode(body) do
+          {:ok, %{"version" => %{"distribution" => "opensearch"}}} ->
+            {:ok, :opensearch}
 
-            {:ok, %{"version" => _}} ->
-              {:ok, :elasticsearch}
+          {:ok, %{"version" => _}} ->
+            {:ok, :elasticsearch}
 
-            _ ->
-              {:ok, :elasticsearch}
-          end
-
+          _ ->
+            {:ok, :elasticsearch}
+        end
+      else
         {:ok, _response} ->
           {:ok, :elasticsearch}
 
@@ -216,9 +234,8 @@ if Code.ensure_loaded?(Snap.Cluster) do
     defp ensure_index(cluster, index_name, projector_module) do
       user_mapping = projector_module.index_mapping()
 
-      # Inject dynamic: strict into the mappings block regardless of user input.
-      # Map.update/4 creates the key if absent; Map.put_new/3 inside the update
-      # function preserves any existing dynamic setting... but we always enforce strict.
+      # Injects dynamic: "strict" into the mappings block unconditionally,
+      # overriding any user-supplied value — prevents mapping explosion (T-06-03).
       mapping_with_strict =
         Map.update(user_mapping, "mappings", %{"dynamic" => "strict"}, fn m ->
           Map.put(m, "dynamic", "strict")

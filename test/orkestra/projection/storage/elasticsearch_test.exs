@@ -261,7 +261,12 @@ if Code.ensure_loaded?(Snap.Cluster) do
           {:ok, %Snap.HTTPClient.Response{status: 200, headers: [], body: es_response_body}}
         end)
 
-        # Simulate 400 with resource_already_exists_exception
+        # Note: Snap.Request.parse_response/2 converts an HTTP 400 response into
+        # {:error, %Snap.ResponseError{type: "resource_already_exists_exception"}}.
+        # The body below uses the nested "error" => %{"type" => ...} structure that
+        # Snap.ResponseError.exception_from_json/1 reads to populate the :type field.
+        # ensure_index/3 matches on %Snap.ResponseError{type: "resource_already_exists_exception"}
+        # and returns :ok, making init/1 idempotent on restart.
         already_exists_body =
           Jason.encode!(%{
             "error" => %{
@@ -275,13 +280,16 @@ if Code.ensure_loaded?(Snap.Cluster) do
           {:ok, %Snap.HTTPClient.Response{status: 400, headers: [], body: already_exists_body}}
         end)
 
-        # Should succeed (idempotent)
-        assert {:ok, _state} =
+        # Verify idempotency: init returns {:ok, state} even when the index exists
+        assert {:ok, state} =
                  Elasticsearch.init(
                    cluster: Orkestra.Test.ESCluster,
                    index: "test_orders",
                    projector_module: TestProjectorForES
                  )
+
+        assert is_map(state)
+        assert state.index == "test_orders"
       end
 
       test "returns {:error, {:index_creation_failed, reason}} on other creation errors" do
@@ -359,6 +367,32 @@ if Code.ensure_loaded?(Snap.Cluster) do
              headers: [],
              body: Jason.encode!(%{"deleted" => 0, "total" => 0})
            }}
+        end)
+
+        assert :ok =
+                 Elasticsearch.reset("test_projector",
+                   cluster: Orkestra.Test.ESCluster,
+                   index: "test_orders"
+                 )
+      end
+
+      test "returns :ok when index does not exist (index_not_found_exception)" do
+        # Simulates the case where reset/2 is called before init/1 has run,
+        # or after manual index deletion. Snap.Request.parse_response/2 converts
+        # HTTP 404 with index_not_found_exception into
+        # {:error, %Snap.ResponseError{type: "index_not_found_exception"}}.
+        # reset/2 treats this as a no-op — the index is already empty.
+        index_not_found_body =
+          Jason.encode!(%{
+            "error" => %{
+              "type" => "index_not_found_exception",
+              "reason" => "no such index [test_orders]"
+            },
+            "status" => 404
+          })
+
+        expect(Snap.MockHTTPClient, :request, fn _cluster, :post, _url, _headers, _body, _opts ->
+          {:ok, %Snap.HTTPClient.Response{status: 404, headers: [], body: index_not_found_body}}
         end)
 
         assert :ok =

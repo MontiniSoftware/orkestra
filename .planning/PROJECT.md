@@ -42,18 +42,19 @@ A developer can define a projection that consumes domain events and maintains a 
 
 ### Active
 
-## Current Milestone: v1.1 Elasticsearch / OpenSearch Projection Adapter
+## Current State
 
-**Goal:** Add an ES/OpenSearch storage adapter to the existing projection subsystem, with zero-downtime rebuild, batch indexing, and an Elixir query DSL.
+**Latest shipped:** v1.1 Elasticsearch / OpenSearch Projection Adapter (2026-06-25)
 
-**Target features:**
-- ES/OpenSearch storage adapter implementing `Orkestra.Projection.Storage` behaviour
-- Direct HTTP client (Req/Finch) — compatible with ES 8.x and OpenSearch 2.x+
-- Index mappings management for projections
-- Zero-downtime rebuild via alias swap
-- Automatic batch indexing during catch-up/rebuild (single-doc in live mode)
-- Elixir query DSL for composing ES queries (match, filter, aggs)
-- Versioned reindex support
+**v1.1 delivered:**
+- ES/OpenSearch storage adapter implementing `Orkestra.Projection.Storage` behaviour via Snap ~> 0.16
+- Runtime engine detection (ES 8.x vs OpenSearch 2.x) with Basic Auth and API key auth
+- GenServer ES commit path: single-doc writes (live) + batch bulk indexing (catch-up/rebuild)
+- `use Orkestra.Projector, backend: :elasticsearch` with `project_es/2` macro
+- Zero-downtime rebuild via `mix orkestra.projection.es.rebuild` using alias swap
+- Pipe-based ES Query DSL (`Orkestra.Projection.ES.Query`)
+- MCP generators: `gen_es_projection`, `gen_es_queries`
+- ES projections visible in `domain_map` and `ListProjections` introspection
 
 ### Out of Scope
 

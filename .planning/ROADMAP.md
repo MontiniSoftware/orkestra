@@ -3,7 +3,7 @@
 ## Milestones
 
 - ✅ **v1.0 Projection / Read-Model Subsystem** — Phases 1-5 (shipped 2026-06-24)
-- 🚧 **v1.1 Elasticsearch / OpenSearch Projection Adapter** — Phases 6-11 (in progress)
+- ✅ **v1.1 Elasticsearch / OpenSearch Projection Adapter** — Phases 6-11 (shipped 2026-06-25)
 
 ## Phases
 
@@ -20,7 +20,21 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 
 </details>
 
-### 🚧 v1.1 Elasticsearch / OpenSearch Projection Adapter (In Progress)
+<details>
+<summary>✅ v1.1 Elasticsearch / OpenSearch Projection Adapter (Phases 6-11) — SHIPPED 2026-06-25</summary>
+
+- [x] Phase 6: ES Storage Adapter Foundation (2/2 plans) — completed 2026-06-25
+- [x] Phase 7: GenServer ES Commit Path and Batch Indexing (2/2 plans) — completed 2026-06-25
+- [x] Phase 8: Projector Macro DSL for Elasticsearch (1/1 plans) — completed 2026-06-25
+- [x] Phase 9: Zero-Downtime Rebuild and Mix Task (2/2 plans) — completed 2026-06-25
+- [x] Phase 10: ES Query DSL Builder (2/2 plans) — completed 2026-06-25
+- [x] Phase 11: MCP Generator and Introspection (2/2 plans) — completed 2026-06-25
+
+Full details: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
+
+</details>
+
+### v1.1 Elasticsearch / OpenSearch Projection Adapter (SHIPPED)
 
 **Milestone Goal:** Add an ES/OpenSearch storage adapter to the existing projection subsystem, with batch indexing, zero-downtime alias-swap rebuild, and an Elixir query DSL — so a developer can point a projector at Elasticsearch the same way they point one at Postgres.
 

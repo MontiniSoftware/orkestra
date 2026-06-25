@@ -385,6 +385,80 @@ defmodule OrkestraMcp.Generator do
     {String.trim(source), Naming.module_to_file_path(module_name)}
   end
 
+  @doc """
+  Generates an ES Queries module with search/3, list/3, and get_by_id/3 helpers.
+  Returns `{source_code, file_path}`.
+
+  `projector_module` is the ES projector module string, e.g.
+  `"MyApp.Orders.OrderESProjector"`.
+  """
+  def gen_es_queries(module_name, projector_module) do
+    source = """
+    defmodule #{module_name} do
+      @moduledoc \"\"\"
+      Elasticsearch query helpers for `#{projector_module}`.
+
+      Provides `search/3`, `list/3`, and `get_by_id/3` built on top of the
+      `Orkestra.Projection.ES.Query` DSL so callers do not need to write
+      boilerplate ES query code.
+      \"\"\"
+
+      alias Orkestra.Projection.ES.Query
+
+      @doc \"\"\"
+      Executes a custom ES query built with the Query DSL.
+
+      `build_fn` is a 1-arity function that receives a fresh `Query.new()`
+      accumulator and must return the result of `Query.build/1`.
+
+      ## Example
+
+          search(MyCluster, "orders", fn q ->
+            q
+            |> Query.must(term: %{"status" => "placed"})
+            |> Query.size(20)
+            |> Query.build()
+          end)
+      \"\"\"
+      def search(cluster, index, build_fn) when is_function(build_fn, 1) do
+        query = build_fn.(Query.new())
+        Snap.Search.search(cluster, index, query)
+      end
+
+      @doc \"\"\"
+      Returns a paginated list of documents from the given index.
+
+      Options:
+        * `:size` - number of results to return (default: 20)
+        * `:from` - starting offset for pagination (default: 0)
+      \"\"\"
+      def list(cluster, index, opts \\\\ []) do
+        size = Keyword.get(opts, :size, 20)
+        from = Keyword.get(opts, :from, 0)
+
+        query =
+          Query.new()
+          |> Query.size(size)
+          |> Query.from(from)
+          |> Query.build()
+
+        Snap.Search.search(cluster, index, query)
+      end
+
+      @doc \"\"\"
+      Retrieves a single document by its ID.
+
+      Returns `{:ok, map()}` on success or an error tuple.
+      \"\"\"
+      def get_by_id(cluster, index, id) do
+        Snap.Document.get(cluster, index, id)
+      end
+    end
+    """
+
+    {String.trim(source), Naming.module_to_file_path(module_name)}
+  end
+
   # --- Private helpers ---
 
   defp format_param(param) do

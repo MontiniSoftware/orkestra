@@ -218,6 +218,30 @@ defmodule OrkestraMcp.GeneratorTest do
     end
   end
 
+  describe "gen_es_queries/2" do
+    test "generates valid ES Queries module with search, list, and get_by_id" do
+      {source, file_path} =
+        Generator.gen_es_queries("MyApp.Orders.ESQueries", "MyApp.Orders.OrderESProjector")
+
+      assert file_path == Naming.module_to_file_path("MyApp.Orders.ESQueries")
+      assert file_path == "lib/my_app/orders/es_queries.ex"
+      assert source =~ "alias Orkestra.Projection.ES.Query"
+      assert source =~ "def search(cluster"
+      assert source =~ "def list(cluster"
+      assert source =~ "def get_by_id(cluster"
+      assert source =~ "Snap.Search.search"
+      assert source =~ "Snap.Document.get"
+      assert {:ok, _} = Code.string_to_quoted(source)
+    end
+
+    test "references the projector module in moduledoc" do
+      {source, _file_path} =
+        Generator.gen_es_queries("MyApp.Orders.ESQueries", "MyApp.Orders.OrderESProjector")
+
+      assert source =~ "MyApp.Orders.OrderESProjector"
+    end
+  end
+
   describe "module_to_table_name/1" do
     test "converts a multi-segment module to a pluralised table name" do
       assert Naming.module_to_table_name("MyApp.Orders.OrderReadModel") == "order_read_models"

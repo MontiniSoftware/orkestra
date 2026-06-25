@@ -24,7 +24,7 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 
 **Milestone Goal:** Add an ES/OpenSearch storage adapter to the existing projection subsystem, with batch indexing, zero-downtime alias-swap rebuild, and an Elixir query DSL — so a developer can point a projector at Elasticsearch the same way they point one at Postgres.
 
-- [ ] **Phase 6: ES Storage Adapter Foundation** - Implement the `Storage` behaviour for ES/OpenSearch with engine detection, auth, idempotent writes, and explicit index mapping management
+- [x] **Phase 6: ES Storage Adapter Foundation** - Implement the `Storage` behaviour for ES/OpenSearch with engine detection, auth, idempotent writes, and explicit index mapping management (completed 2026-06-25)
 - [ ] **Phase 7: GenServer ES Commit Path and Batch Indexing** - Wire the ES write path in the projector GenServer, add batch accumulation for catch-up mode, and instrument all ES operations with OTel spans and telemetry metrics
 - [ ] **Phase 8: Projector Macro DSL for Elasticsearch** - Add `backend: :elasticsearch`, `project_es/2`, and ES-specific options to `use Orkestra.Projector` without regressing Postgres projectors
 - [ ] **Phase 9: Zero-Downtime Rebuild and Mix Task** - Implement versioned index creation, alias swap, live-write pause, and the `mix orkestra.projection.es.rebuild` task
@@ -43,10 +43,10 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
   3. A `write/4` call returns an `es_op` descriptor map with `:action`, `:id`, and `:doc` keys; the document is indexed as a full-document upsert using a deterministic ID
   4. Authentication works with both Basic Auth credentials and an API key without code changes to the projector
   5. Engine divergences between ES 8.x and OpenSearch 2.x are handled transparently via runtime detection at startup
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 06-01-PLAN.md — Dependencies, API key auth module, and ES test infrastructure
-- [ ] 06-02-PLAN.md — ES/OpenSearch storage adapter (write/4, reset/2, engine detection, index management)
+- [x] 06-02-PLAN.md — ES/OpenSearch storage adapter (write/4, reset/2, engine detection, index management)
 
 ### Phase 7: GenServer ES Commit Path and Batch Indexing
 **Goal**: An ES projector processes events end-to-end: single-document writes in live mode and batched bulk indexing during catch-up/rebuild, with per-item partial failure detection, OTel spans for every ES operation, and telemetry metrics for batch throughput and rebuild progress
@@ -116,7 +116,7 @@ Note: Phase 10 depends only on Phase 6 (independent of write path) but is sequen
 | 3. DSL, Supervisor, Mix Tasks, and Config | v1.0 | 2/2 | Complete | 2026-06-24 |
 | 4. Telemetry & Observability | v1.0 | 2/2 | Complete | 2026-06-24 |
 | 5. MCP Integration and Query Helpers | v1.0 | 3/3 | Complete | 2026-06-24 |
-| 6. ES Storage Adapter Foundation | v1.1 | 1/2 | In Progress|  |
+| 6. ES Storage Adapter Foundation | v1.1 | 2/2 | Complete   | 2026-06-25 |
 | 7. GenServer ES Commit Path and Batch Indexing | v1.1 | 0/? | Not started | - |
 | 8. Projector Macro DSL for Elasticsearch | v1.1 | 0/? | Not started | - |
 | 9. Zero-Downtime Rebuild and Mix Task | v1.1 | 0/? | Not started | - |

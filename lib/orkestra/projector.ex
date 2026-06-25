@@ -149,14 +149,28 @@ defmodule Orkestra.Projector do
 
   ## __projection_config__/0 return shape
 
-  Used by mix tasks (e.g. `mix projector.migrate`) to discover per-projection
-  repos and migration paths:
+  Used by mix tasks (e.g. `mix projector.migrate`, `mix orkestra.projection.es.rebuild`)
+  to discover per-projection repos, migration paths, and backend-specific configuration:
 
       %{
         repo: MyApp.OrderProjection.Repo,
         projector_name: "MyApp.OrderProjector",
         migrations_path: "priv/projections/myapp_order_projector/migrations",
-        migration_source: "projection_myapp_order_projector_schema_migrations"
+        migration_source: "projection_myapp_order_projector_schema_migrations",
+        backend: :postgres,
+        cluster: nil,
+        index: nil,
+        projector_module: MyApp.OrderProjector
+      }
+
+  For Elasticsearch projectors the map additionally contains:
+
+      %{
+        ...
+        backend: :elasticsearch,
+        cluster: MyApp.ESCluster,
+        index: "orders",
+        projector_module: MyApp.OrderESProjector
       }
 
   ## Per-Projection Repo Configuration
@@ -432,20 +446,34 @@ defmodule Orkestra.Projector do
       Returns the compile-time projection configuration map.
 
       Used by mix tasks to discover per-projection repos, migrations paths,
-      and migration source table names.
+      migration source table names, and backend-specific configuration
+      (`:backend`, `:cluster`, `:index`, `:projector_module`) for the
+      `mix orkestra.projection.es.rebuild` task (RBLD-02).
+
+      Postgres projectors return `backend: :postgres`, `cluster: nil`, `index: nil`.
+      Elasticsearch projectors return `backend: :elasticsearch`, `cluster: MyCluster`,
+      `index: "my_index"`.
       """
       @spec __projection_config__() :: %{
               repo: module(),
               projector_name: String.t(),
               migrations_path: String.t(),
-              migration_source: String.t()
+              migration_source: String.t(),
+              backend: :postgres | :elasticsearch,
+              cluster: module() | nil,
+              index: String.t() | nil,
+              projector_module: module()
             }
       def __projection_config__ do
         %{
           repo: unquote(repo),
           projector_name: unquote(projector_name),
           migrations_path: unquote(migrations_path),
-          migration_source: unquote(migration_source)
+          migration_source: unquote(migration_source),
+          backend: unquote(backend),
+          cluster: unquote(es_cluster),
+          index: unquote(es_index),
+          projector_module: __MODULE__
         }
       end
 

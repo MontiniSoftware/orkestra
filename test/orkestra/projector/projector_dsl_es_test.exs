@@ -199,6 +199,56 @@ if Code.ensure_loaded?(Snap.Cluster) do
       end
     end
 
+    describe "__projection_config__/0 ES fields (RBLD-03 support)" do
+      test "ES projector returns backend: :elasticsearch in __projection_config__" do
+        config = TestESProjector.__projection_config__()
+        assert config.backend == :elasticsearch
+      end
+
+      test "ES projector returns correct cluster in __projection_config__" do
+        config = TestESProjector.__projection_config__()
+        assert config.cluster == Orkestra.Test.ESCluster
+      end
+
+      test "ES projector returns correct index in __projection_config__" do
+        config = TestESProjector.__projection_config__()
+        assert config.index == "test_orders"
+      end
+
+      test "ES projector returns projector_module: self in __projection_config__" do
+        config = TestESProjector.__projection_config__()
+        assert config.projector_module == Orkestra.Projector.ProjectorDslEsTest.TestESProjector
+      end
+
+      test "ES projector still exposes legacy fields (repo, projector_name, migrations_path, migration_source)" do
+        config = TestESProjector.__projection_config__()
+        assert config.repo == SomeCheckpointRepo
+        assert is_binary(config.projector_name)
+        assert is_binary(config.migrations_path)
+        assert is_binary(config.migration_source)
+      end
+
+      test "Postgres projector returns backend: :postgres in __projection_config__" do
+        config = TestPostgresProjectorInES.__projection_config__()
+        assert config.backend == :postgres
+      end
+
+      test "Postgres projector returns cluster: nil in __projection_config__" do
+        config = TestPostgresProjectorInES.__projection_config__()
+        assert config.cluster == nil
+      end
+
+      test "Postgres projector returns index: nil in __projection_config__" do
+        config = TestPostgresProjectorInES.__projection_config__()
+        assert config.index == nil
+      end
+
+      test "Postgres projector returns projector_module: self in __projection_config__" do
+        config = TestPostgresProjectorInES.__projection_config__()
+        assert config.projector_module == Orkestra.Projector.ProjectorDslEsTest.TestPostgresProjectorInES
+      end
+    end
+
     describe "backward compatibility" do
       test "Postgres projector defined alongside ES projector still uses Storage.Postgres" do
         # TestPostgresProjectorInES is a Postgres projector defined in this same

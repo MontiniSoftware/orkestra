@@ -72,7 +72,9 @@ Plans:
   2. The `project_es/2` macro maps an event type to an ES write descriptor the same way `project/2` maps to a Postgres write
   3. Checkpoint writes execute ES-first then Postgres-second (at-least-once semantics), verified by a test that kills the process between the two writes and confirms the event is reprocessed on restart
   4. All existing Postgres projector tests continue to pass unchanged
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 08-01-PLAN.md — ES macro DSL (project_es/2, __dispatch_es__/3, child_spec ES branch, GenServer :init_adapter)
 
 ### Phase 9: Zero-Downtime Rebuild and Mix Task
 **Goal**: A developer can trigger a full ES projection rebuild via `mix orkestra.projection.es.rebuild` that creates a versioned index, replays all events, atomically swaps the alias, and cleans up the old index — without any search downtime and without a race condition between live writes and the alias swap
@@ -108,7 +110,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 6 → 7 → 8 → 9 → 10 → 11
+Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11
 Note: Phase 10 depends only on Phase 6 (independent of write path) but is sequenced after Phase 9 for milestone coherence.
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -120,7 +122,7 @@ Note: Phase 10 depends only on Phase 6 (independent of write path) but is sequen
 | 5. MCP Integration and Query Helpers | v1.0 | 3/3 | Complete | 2026-06-24 |
 | 6. ES Storage Adapter Foundation | v1.1 | 2/2 | Complete   | 2026-06-25 |
 | 7. GenServer ES Commit Path and Batch Indexing | v1.1 | 2/2 | Complete   | 2026-06-25 |
-| 8. Projector Macro DSL for Elasticsearch | v1.1 | 0/? | Not started | - |
+| 8. Projector Macro DSL for Elasticsearch | v1.1 | 0/1 | Planning   | - |
 | 9. Zero-Downtime Rebuild and Mix Task | v1.1 | 0/? | Not started | - |
 | 10. ES Query DSL Builder | v1.1 | 0/? | Not started | - |
 | 11. MCP Generator and Introspection | v1.1 | 0/? | Not started | - |

@@ -1,224 +1,361 @@
-# Feature Research
+# Feature Research — ES/OpenSearch Projection Adapter
 
-**Domain:** Event-sourced projection / read-model subsystem (Elixir CQRS library)
-**Researched:** 2026-06-24
-**Confidence:** MEDIUM (cross-checked against Commanded ecosystem docs + community sources; websearch confidence LOW, context7 MEDIUM, cross-verification elevates overall to MEDIUM)
+**Domain:** Elasticsearch / OpenSearch storage adapter for Orkestra's projection subsystem
+**Researched:** 2026-06-25
+**Confidence:** MEDIUM-HIGH (Snap API verified via hexdocs; ES/OpenSearch Bulk API verified via official docs; query DSL patterns cross-verified against Python elasticsearch-dsl, Ruby elasticsearch-dsl, and ExlasticSearch for Elixir)
 
 ---
 
 ## Scope Note
 
-This document covers only the **read/projection side** of Orkestra. The write side (aggregates, commands, events, message bus, event store) is existing and validated. Research benchmarks against the dominant Elixir CQRS library (Commanded + commanded-ecto-projections) to identify gaps, parity, and opportunities.
+This document covers only the **new features** required for the v1.1 milestone: an
+Elasticsearch/OpenSearch storage adapter on top of the already-shipped projection
+subsystem (v1.0). All v1.0 table-stakes (projector DSL, checkpointing, lifecycle, retry/halt,
+OTel, Mix tasks, MCP generators) are already built and are **dependencies**, not features to
+build here. References to them appear only to clarify interface contracts.
 
 ---
 
-## Feature Landscape
+## What the ES Adapter Must Plug Into
 
-### Table Stakes (Users Expect These)
+The existing `Orkestra.Projection.Storage` behaviour requires two callbacks:
 
-Features users assume exist. Missing these = the projection subsystem is not usable.
+```elixir
+@callback write(projector_name(), event(), non_neg_integer(), opts()) ::
+            {:ok, ops()} | {:error, term()}
+
+@callback reset(projector_name(), opts()) :: :ok | {:error, term()}
+```
+
+The Postgres adapter returns an `Ecto.Multi.t()` from `write/4` — a composable descriptor that
+the projector GenServer merges with the checkpoint upsert before committing. The ES adapter
+**cannot** use the same pattern because ES has no multi-table transactions. Its `write/4`
+must return an ES-specific descriptor that the projector commits, then the checkpoint is
+written separately (post-confirmation, same at-least-once semantics as Mongo). The existing
+architecture doc (ARCHITECTURE.md, Pattern 2) already anticipated this: "ES adapter (post-write):
+1. HTTP index call 2. Checkpoint.upsert."
+
+---
+
+## Table Stakes
+
+Features users expect. Missing any of these = the adapter is not usable as a projection backend.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| **Projector definition via macro/behaviour** | Every CQRS library provides a DSL for mapping events → read-model writes. Developers won't hand-roll GenServer subscriptions. | MEDIUM | Use `use Orkestra.Projector` + `project EventType, fn event, multi -> ... end` DSL modeled on Commanded's `project/3`. Wraps Ecto.Multi per event. |
-| **Async consumption via message bus** | Write path must be decoupled from read path. In-process sync projections break on distributed deployments and cause write-path failures from constraint violations. | LOW | Reuse the existing `MessageBus` abstraction (PubSub or RabbitMQ). Projector is a supervised consumer, not inline in `Aggregate.Root`. |
-| **Per-projector checkpoint persistence** | Without checkpoints, a projector restart replays all events from the beginning. Users expect resume-from-last-position. | MEDIUM | Store `{projector_name, last_event_position}` in Postgres (same Ecto repo). Checkpoint update and read-model write are in the same transaction — the only way to guarantee idempotency. |
-| **Resume after restart** | Corollary of checkpoint: the projector reads its persisted checkpoint on startup and subscribes from that position. | LOW | Depends on checkpoint persistence (above). Read checkpoint → pass to message bus subscription as `start_from` equivalent. |
-| **Full rebuild / replay from event store** | Read models must be rebuildable when schema changes or bugs are found. Without rebuild, users can't evolve read models safely. | HIGH | Drop read-model tables + checkpoint → replay all events from event store head position 0. Requires direct event store access (not just message bus), since the bus does not replay history. |
-| **In-order error handling: retry then halt** | At-least-once delivery means retries happen. Skipping-ahead on error creates gaps / corrupt read models. Users must be able to trust read-model consistency. | HIGH | On error: retry N times (configurable, reuse orkestra retry semantics) → on exhaustion, park event to dead-letter store and **halt that projector** (no further events consumed). Configurable per-projector. This is stricter than Commanded (which offers `:skip` as a return). |
-| **Dead-letter / park semantics** | Halting a projector without persistence means the problematic event is lost after restart. Users expect to inspect and re-drive failed events. | MEDIUM | Persist parked events (projector_name, event_position, error, attempts, parked_at). Provide a way to drain/retry the dead-letter or discard and resume. |
-| **Ecto-backed storage for Postgres adapter** | Elixir standard. Developers expect their read models to be Ecto schemas, queryable with Ecto.Query. | LOW | Each projector declares its read-model schema(s). Writes use Ecto.Multi. Developers query via standard `Repo.all/2`, `Repo.get/3`, etc. |
-| **Idempotent event processing** | Message bus guarantees at-least-once, not exactly-once. Duplicate event delivery must not double-apply writes. | MEDIUM | Checkpoint position tracked atomically with the write in the same Ecto transaction. Stale/duplicate events (position <= last checkpoint) are ignored before processing. |
-| **Supervised lifecycle (OTP)** | Projectors must restart on crash, integrate with application supervision trees. | LOW | Projector is a GenServer (consistent with existing `EventHandler` pattern). Users add it to their supervision tree like any other Orkestra process. |
+| **`Storage` behaviour implementation** | The projector GenServer calls `write/4` and `reset/2` on whatever adapter is configured. ES adapter must implement these two callbacks to plug into the existing lifecycle without modification. | LOW | `Orkestra.Projection.Storage.Elasticsearch` (or `Storage.ES`) implements `write/4` and `reset/2`. Guard with `Code.ensure_loaded?(Snap.Cluster)`. `write/4` returns an ES-specific descriptor (index name + document map). `reset/2` deletes all documents by projector name or deletes + recreates the index. |
+| **Snap cluster integration** | Snap is the selected ES/OpenSearch client (STACK.md). The adapter needs a configured `Snap.Cluster` module to make HTTP calls. | LOW | Consumer configures `MyApp.Cluster` via `use Snap.Cluster, otp_app: :my_app`. Adapter accepts `:cluster` and `:index` opts in `write/4` opts. Snap manages connection pooling and authentication transparently. |
+| **Single-document index on live events** | During live (caught-up) mode the projector processes one event at a time. Each call to `write/4` must result in exactly one ES index/upsert operation per document. Batching here is incorrect — it would delay visibility and complicate retry semantics. | LOW | Call `Snap.Document.index/5` or `Snap.Document.create/5` per event. Return `{:ok, ops}` where `ops` is the ES write descriptor. On HTTP error, return `{:error, reason}` so the projector lifecycle triggers retry. |
+| **Index existence check on projector start** | If the target ES index does not exist when the projector starts, the first `write/4` call will return a 404. The projector must either create the index (with mapping) or fail with a clear error before processing any events. | LOW | Add a `setup/1` step (or enforce via adapter `init`): call `Snap.Indexes.create/4` with the `index_mapping/0` callback result if the index does not exist yet. Log a clear error if creation fails. |
+| **`index_mapping/0` callback on projector** | ES index mappings must be defined before indexing documents — auto-mapping produces wrong field types (e.g., text where keyword is needed, long where boolean is needed). Without an explicit mapping callback, developers have no way to declare field types, analyzers, or dynamic settings. | MEDIUM | Add `@callback index_mapping() :: map()` to `Orkestra.Projector`. ES projectors implement this to return the ES `mappings` object. The adapter uses it at index creation time and during versioned rebuild. Non-ES projectors use `@optional_callbacks`. |
+| **Document ID strategy** | ES requires a document ID for upserts. Without an explicit ID strategy, every write creates a new document instead of updating the existing one, causing unbounded index growth and incorrect read-model state. | LOW | Add `@callback document_id(event :: map()) :: String.t()` as an optional callback on `Orkestra.Projector` (or on the ES adapter module). Default: derive from event's aggregate ID or stream ID. Allow override per projector. |
+| **Post-write checkpoint advance** | ES has no transactions. After a successful `write/4`, the projector GenServer must write the checkpoint separately. The existing architecture already handles this (at-least-once semantics, same as Mongo). Handlers must be idempotent. | LOW | No new code needed in the adapter itself — the projector GenServer already handles post-write checkpoint for non-Ecto adapters. Adapter `write/4` just returns `:ok` after confirming the ES HTTP call. Document that ES handlers must be idempotent (e.g., upsert by document ID rather than insert). |
 
-### Differentiators (Competitive Advantage)
+---
 
-Features that set Orkestra apart from the Commanded ecosystem. These are the gaps in the state of the art.
+## Differentiators
+
+Features that make the ES adapter meaningfully better than a manual Snap integration, and that no existing Elixir CQRS library ships.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| **Per-projection isolated migrations** | Commanded-ecto-projections uses the application's shared Ecto repo migration history — there's no way to migrate, rollback, or drop a single projection independently. Orkestra's isolated migrations let a projection own its schema fully: run migrations, roll back, drop, and rebuild without touching other projections or the main app schema. | HIGH | Each projector configures its own `Ecto.Repo` (or a logical schema prefix / migration table prefix). Migration runner (`Orkestra.Projector.Migrate`, `Orkestra.Projector.Rollback`, `Orkestra.Projector.Drop`) operates exclusively on that projection's migration history. This is the "graceful migrations" goal. Depends on Ecto migration API. |
-| **Park-and-halt error mode (not skip)** | Commanded's `error/3` offers `:skip` (swallow the event and advance) — a footgun that silently corrupts read models. Orkestra's default is park-then-halt: the problematic event is preserved in a dead-letter store and the projector stops advancing until an operator intervenes. Users get safety by default with an explicit escape hatch. | MEDIUM | Differentiates on correctness guarantee. Configurable: `on_error: :halt` (default) vs `on_error: :skip` for projectors where losing an event is acceptable. |
-| **Projection lag telemetry** | No Elixir CQRS library ships first-class lag metrics. Lag = `head_event_position - checkpoint_position`. This is the single most operationally useful metric for a projection subsystem. | MEDIUM | Emit as OTel metric (counter/gauge): `orkestra.projection.lag`, `orkestra.projection.checkpoint`, `orkestra.projection.events_processed`, `orkestra.projection.events_failed`, `orkestra.projection.rebuild_progress`. One OTel span per event processed. Reuse existing `Telemetry` module conventions. |
-| **Rebuild progress reporting** | Rebuilds can take minutes or hours on large event stores. Without progress reporting, users have no idea if a rebuild is stalled or near completion. | LOW | During rebuild, emit `orkestra.projection.rebuild_progress` with `{events_done, total, percent}`. Exposed via the telemetry module (same OTel pattern). |
-| **Optional generated `Queries` module** | Ecto-first access is idiomatic, but boilerplate list/get operations are tedious. A generated `Queries` module per read model (paged `list/1`, `get_by/2`) reduces friction for common patterns without hiding Ecto. | MEDIUM | `use Orkestra.Projector.Queries, schema: MyApp.ReadModels.OrderView, repo: MyApp.ProjectionRepo` generates `list(page: 1, per_page: 20)` and `get_by(id: uuid)` as thin Ecto wrappers. Prototype and refine — not a replacement for Ecto.Query. |
-| **MCP code generation (`gen_projection`)** | Consistent with existing `gen_aggregate`, `gen_command` tools in orkestra_mcp. Removes boilerplate for common projection patterns. | MEDIUM | Generates: projector module, read-model Ecto schema, migration file, optional Queries module, and test stub. Introspection: projections surfaced in `domain_map` and `list_projections` resources. |
-| **Elasticsearch adapter: zero-downtime reindex via alias swap** | ES projections are complex to evolve safely. The alias-swap pattern (build new versioned index → replay → atomic alias switch → drop old) gives zero-downtime schema evolution with event-sourced replay as the source of truth. No Elixir library ships this. | HIGH | `Orkestra.Projector.Elasticsearch`: `index_mapping/0` callback defines ES mapping. Versioned index naming (`my_index_v2`). `reindex/0` replays from event store into new index. `swap_alias/0` atomically redirects the alias. `bulk_index/1` for batch ingest during replay. This is a follow-up milestone adapter — core abstraction must not preclude it. |
-| **Elasticsearch adapter: bulk indexing during replay** | Naive per-event ES writes during replay are 10–100x slower than bulk. Without bulk support, large-event-store replays are impractical. | MEDIUM | Buffer events during replay phase, flush in configurable batch sizes (e.g., 500 docs) using ES bulk API. Switch to per-event indexing once caught up with live stream. |
+| **Zero-downtime rebuild via alias swap (hotswap)** | Rebuilding an ES index naively requires deleting the current index (making it unavailable during replay), replaying all events, then recreating. With an alias swap, the old index remains live for reads while a new versioned index is built in the background; the alias is switched atomically when the new index is fully caught up. No downtime, no read gaps. `Snap.Indexes.hotswap/5` implements exactly this. | HIGH | During rebuild: (1) create new versioned index (e.g., `orders_v2_20260625`), (2) replay all events into the new index via `Snap.Bulk` stream, (3) call `Snap.Indexes.alias/4` to atomically redirect the alias. Projectors in normal mode point to the alias, not the versioned index. See `Snap.Indexes.hotswap/5` — it takes an `Enumerable` of `Snap.Bulk.Action.*` structs, creates/loads/refreshes/aliases atomically. |
+| **Automatic batch indexing during catch-up / rebuild** | Projecting events one-at-a-time into ES during catch-up or rebuild is 10–100x slower than bulk. At 5,000 events/batch (Snap.Bulk default) with 100K events, the difference is seconds vs minutes. Without batching, large event stores make ES projectors impractical to rebuild. | MEDIUM | During catch-up/rebuild mode: buffer events into a batch of configurable size (default 500, configurable via `batch_size` opt). Flush via `Snap.Bulk.perform/4` when batch is full or on a time deadline. Switch to single-document mode once caught up with live stream. The projector GenServer must expose a `mode` field (`:catching_up` vs `:live`) that the adapter checks to decide batch vs single write. |
+| **Versioned index naming** | Without versioned index names, a rebuild requires deleting the live index — there is no way to build the new version alongside the old one. Versioned names (e.g., `orders_v2_20260625T120000`) enable blue-green rebuild: create new, fill it, swap alias, drop old. They also make it trivial to roll back to the previous index version if the new mapping has a bug. | LOW | Naming convention: `{base_index_name}_{YYYYMMDDTHHMMSS}`. `Snap.Indexes.list_starting_with/3` lists all versioned indexes for a prefix. `Snap.Indexes.cleanup/4` deletes old ones (preserves last N, default 2). The adapter wraps these in `Orkestra.Projection.ES.Index.create_versioned/2` and `cleanup/2`. |
+| **Elixir query DSL for ES queries** | Reading from an ES-backed projection requires composing ES Query DSL JSON. Without a helper DSL, developers must write nested maps by hand — verbose, error-prone, and not idiomatic Elixir. A pipe-based builder that produces the ES JSON structure makes ES-backed queries as ergonomic as Ecto queries. | HIGH | `Orkestra.Projection.ES.Query` module: builder functions returning maps that compose via `|>`. Pattern: `search() |> must(match(:title, "foo")) |> filter(term(:status, :active)) |> aggs(:count, terms(:category)) |> to_query()`. Produces `%{"query" => %{"bool" => %{"must" => [...], "filter" => [...]}}, "aggs" => {...}}`. No new deps — pure Elixir map manipulation. See Python elasticsearch-dsl and ExlasticSearch for Elixir (pipe-pattern) as design references. |
+| **Optional `Queries` module for ES projections** | Mirrors the existing Ecto `Queries` module (v1.0 feature). ES-specific `list/1` and `search/1` helpers that emit OTel spans and wrap the query DSL. Removes boilerplate common ES queries. | MEDIUM | `use Orkestra.Projection.ES.Queries, cluster: MyApp.Cluster, index: "orders"` generates `search(query_map)`, `get(id)`, `list(opts)` as thin wrappers over `Snap.Search.search/4`. Consistent with the Ecto Queries generator in approach. |
+| **MCP generators for ES projections** | Consistent with existing `gen_projection` (already shipped for Ecto). An ES-specific variant would generate: projector module with `index_mapping/0`, `document_id/1`, `project/2` callbacks; Snap cluster config; optional `Queries` module; and a test stub using Snap's Mox-based mock adapter. | MEDIUM | New MCP tool `gen_es_projection` or ES-mode flag on `gen_projection`. Generates conforming module structure. Lower priority than the core adapter. |
 
-### Anti-Features (Commonly Requested, Often Problematic)
+---
 
-Features that seem good but create correctness or complexity problems. Explicitly avoid these.
+## Anti-Features
 
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| **Synchronous (inline) projections in the command path** | Feels simpler — "update the read model in the same transaction as the command." | Database constraint violations in the projection roll back the command's events. Write and read sides become coupled. Breaks on distributed message bus (RabbitMQ). Standard CQRS wisdom: async projections + eventual consistency is correct. | Async projections via message bus + replay. If strong read-after-write consistency is needed, use `:strong` consistency mode (block command dispatch until handler ack) — but do not merge write and read transactions. |
-| **Skip-on-error as the default behavior** | "Don't let one bad event stall the whole pipeline." | Silently corrupts the read model by creating gaps. The read model drifts from the true event history. Operators don't know a problem occurred. | Park-and-halt: preserve the bad event in dead-letter, stop the projector, alert via telemetry. An operator can fix the projector code, drain the dead-letter, and resume. |
-| **Uniform cross-backend query API (SQL + ES + Mongo under one interface)** | Seems like a clean abstraction. | SQL (Ecto.Query), Elasticsearch (DSL + scores + aggregations), and MongoDB (document queries) have fundamentally different semantics. A leaky abstraction that covers all three poorly helps no one. | Per-adapter idiomatic query APIs. Ecto-first for Postgres, ES query DSL for Elasticsearch, Mongo query for MongoDB. The optional `Queries` module is adapter-specific, not cross-backend. |
-| **Shared migration repo across all projections** | Feels simpler to run one `mix ecto.migrate`. | A migration failure in one projection blocks all others from migrating. Projections cannot be dropped/rebuilt independently. Read-model evolution becomes tangled with app schema. | Per-projection isolated migration table. Each projector migrates independently. Provide a `mix orkestra.projector.migrate ProjectorName` task. |
-| **In-memory projections as the primary pattern** | Useful for tests; sometimes requested for low-latency "live" read models. | State is lost on restart. Requires full replay on every boot. Does not compose with the checkpoint/rebuild system. | In-memory projections are acceptable for tests only (using InMemory event store). For production, always persist. |
-| **Fully normalized read-model schemas** | Habits from ORM-first development. | JOINs at query time destroy the performance benefit of having a read model. Projections exist precisely to pre-compute denormalized query shapes. | Design projections for query patterns (one record = one view). Embrace redundancy. Use Ecto schemas that match what the query needs, not third normal form. |
+Features that seem like obvious additions but create correctness, complexity, or semantic mismatch problems. Explicitly do not build these.
+
+| Anti-Feature | Why Requested | Why Problematic | What to Do Instead |
+|--------------|---------------|-----------------|-------------------|
+| **Transactional checkpoint co-write with ES** | "I want the same atomicity guarantee as the Ecto adapter." | ES HTTP API has no transactions. An ES index call and a Postgres checkpoint write cannot be atomic. Attempting to fake this (e.g., using XA transactions or two-phase commit) adds enormous complexity with no guarantee — ES and Postgres are separate systems. | Accept at-least-once semantics: write to ES, confirm success, then write checkpoint. All ES `project/2` handlers must be idempotent (upsert by document ID, not insert). Document this clearly. |
+| **Uniform cross-backend query API (Ecto + ES under one interface)** | "I want to query both SQL and ES projections the same way." | ES queries (full-text, scoring, aggregations) have fundamentally different semantics from SQL. A least-common-denominator API hides ES's key strengths (scoring, suggest, aggs) and SQL's key strengths (JOINs, window functions). Both become worse. | Provide idiomatic, adapter-specific query helpers. The ES `Queries` module uses ES query DSL. The Ecto `Queries` module uses Ecto.Query. Developers choose the right backend for the query. |
+| **ES as a primary event store (appending events to ES)** | "ES has full-text, so why not store events there too?" | ES is not designed as a primary event store: no strict ordering guarantee, no optimistic concurrency, no server-side event stream semantics, expensive to scan sequentially. The existing EventStoreDB and InMemory adapters are the write side. | ES is a read-model store only. Events flow: EventStore → Projector → ES index. Never from ES back to the write side. |
+| **Per-document ES checkpoint tracking** | "Track a checkpoint field on every document so I know which position each document is at." | Adds a hidden field to every document that leaks infrastructure state into the read model schema. Queries must filter it out. The checkpoint (projector-level, not document-level) belongs in the existing `projection_checkpoints` table. | Use the existing Postgres-backed `projection_checkpoints` table for the projector-level position. The ES index contains only domain read-model fields. |
+| **`dynamic: true` mapping (auto-mapping)** | "Let ES infer the mapping, less configuration." | ES will guess field types from the first document it sees. `text` vs `keyword`, `long` vs `boolean`, nested vs object — wrong defaults are impossible to fix without a full reindex. Auto-mapping is a footgun in production. | Require `index_mapping/0` callback. Use `dynamic: "strict"` in the mapping to fail loudly on unexpected fields rather than silently creating wrong-type fields. |
+| **Synchronous alias swap during a live projector** | "I want to do a schema migration without stopping the projector." | If the alias swap happens while the live projector is writing to the old versioned index (pre-alias pointing), documents written after the swap go to the old (now unaliased) index and are lost. | Use the hotswap/rebuild flow: stop or shadow the live projector, replay into the new index, swap alias, then start the live projector against the new index. The hotswap must happen during a full rebuild cycle, not inline. |
 
 ---
 
 ## Feature Dependencies
 
 ```
-[Async consumption via message bus]
-    └──requires──> [Supervised lifecycle (OTP)]
+[ES Storage.write/4 (single-doc live mode)]
+    └──requires──> [Snap cluster integration]
+    └──requires──> [document_id/1 callback]
+    └──requires──> [index_mapping/0 callback]  (index must exist before write)
+    └──plugs into──> [Orkestra.Projection.Storage behaviour]  (existing)
 
-[Per-projector checkpoint persistence]
-    └──requires──> [Ecto-backed storage]
-    └──enables──>  [Resume after restart]
-    └──enables──>  [Idempotent event processing]
+[ES Storage.reset/2 (rebuild prep)]
+    └──requires──> [Snap cluster integration]
+    └──enables──>  [Zero-downtime rebuild via alias swap]
 
-[Full rebuild / replay]
-    └──requires──> [Per-projector checkpoint persistence]  (reset checkpoint on rebuild start)
-    └──requires──> [Event store direct read access]        (bus does not replay history)
-    └──enhances──> [Per-projection isolated migrations]    (drop + migrate + replay)
+[Batch indexing during catch-up/rebuild]
+    └──requires──> [ES Storage.write/4 (single-doc live mode)]
+    └──requires──> [Snap.Bulk.perform/4]  (Snap built-in)
+    └──requires──> [Projector GenServer mode flag (:catching_up vs :live)]  (existing lifecycle)
+    └──enables──>  [Zero-downtime rebuild via alias swap]  (hotswap uses a Bulk stream)
 
-[In-order error handling: retry then halt]
-    └──requires──> [Dead-letter / park semantics]          (halt needs somewhere to put the event)
-    └──requires──> [Per-projector checkpoint persistence]  (halt must not advance checkpoint)
+[Zero-downtime rebuild via alias swap]
+    └──requires──> [Batch indexing during catch-up/rebuild]
+    └──requires──> [Versioned index naming]
+    └──requires──> [Snap.Indexes.hotswap/5]  (Snap built-in)
+    └──requires──> [Full rebuild / replay]  (existing, v1.0)
+    └──requires──> [index_mapping/0 callback]
 
-[Per-projection isolated migrations]
-    └──requires──> [Ecto-backed storage]
-    └──enhances──> [Full rebuild / replay]                 (drop schema → migrate → replay)
+[Versioned index naming]
+    └──requires──> [Snap.Indexes.list_starting_with/3]  (Snap built-in)
+    └──requires──> [Snap.Indexes.cleanup/4]  (Snap built-in)
+    └──enables──>  [Zero-downtime rebuild via alias swap]
 
-[Optional generated Queries module]
-    └──requires──> [Ecto-backed storage]
-    └──enhances──> [Projector definition via macro/behaviour]
+[Elixir query DSL for ES queries]
+    └──requires──> [Snap.Search.search/4]  (Snap built-in)
+    └──independent of──> write-path features (query-only, no write coupling)
 
-[Projection lag telemetry]
-    └──requires──> [Per-projector checkpoint persistence]  (checkpoint position is needed to compute lag)
-    └──requires──> [Event store head position API]         (need head to compute lag = head - checkpoint)
+[Optional ES Queries module]
+    └──requires──> [Elixir query DSL for ES queries]
+    └──requires──> [Snap cluster integration]
 
-[Rebuild progress reporting]
-    └──requires──> [Full rebuild / replay]
-
-[MCP gen_projection]
-    └──requires──> [Projector macro/behaviour]             (generates conforming module)
-    └──requires──> [Per-projection isolated migrations]    (generates migration scaffold)
-    └──enhances──> [Optional generated Queries module]     (optionally generates Queries module)
-
-[ES adapter: zero-downtime alias swap]
-    └──requires──> [Full rebuild / replay]                 (replay into new index is the rebuild)
-    └──requires──> [ES bulk indexing]                      (replay at scale needs batching)
-    └──requires──> [Core projector abstraction]            (adapter plugs into shared lifecycle)
-
-[ES adapter: bulk indexing]
-    └──requires──> [Async consumption via message bus]
-    └──enhances──> [ES adapter: zero-downtime alias swap]
+[MCP gen_es_projection]
+    └──requires──> [ES Storage.write/4]
+    └──requires──> [index_mapping/0 callback]
+    └──enhances──> [Optional ES Queries module]
 ```
 
-### Dependency Notes
+### Critical Dependency: Projector Mode Flag
 
-- **Checkpoint persistence requires atomic Ecto transaction with write:** The checkpoint update and read-model mutation must happen in the same `Ecto.Multi` transaction. If they're separate, a crash between them causes either duplicate writes (if checkpoint is written last) or missed writes (if checkpoint is written first). This is the foundational correctness constraint.
-- **Full rebuild requires event store access, not just message bus:** The message bus only delivers live/recent events. To replay from position 0, the projector must call the event store directly (same `EventStore` behaviour that aggregates use). The message bus subscription then takes over at the position where the event store replay ended.
-- **Park-and-halt requires dead-letter persistence before halting:** The event must be written to dead-letter storage in the same transaction as the checkpoint freeze (or before halting). A crash between parking and halting must not lose the parked event.
-- **ES alias swap conflicts with single-active-projector assumption:** During blue-green rebuild for ES, two projector instances logically run (old live, new rebuilding). The lifecycle must support a "shadow rebuild" mode that doesn't conflict with the primary projector's checkpoint. This is a design constraint for the ES adapter milestone.
+The batch indexing feature requires the projector GenServer to expose whether it is in
+`:catching_up` or `:live` mode. The existing v1.0 projector lifecycle already tracks
+`:status` (`:starting`, `:catching_up`, `:running`). The ES adapter must be able to inspect
+this mode to decide between buffered bulk writes and single-document writes. This is the
+key integration point between the new adapter and the existing lifecycle code.
+
+### Checkpoint Semantics Difference (No Ecto.Multi)
+
+The Ecto adapter returns an `Ecto.Multi.t()` from `write/4` that includes the checkpoint
+upsert — atomic in one transaction. The ES adapter cannot do this. Two options:
+
+1. **`write/4` returns `{:ok, :applied}` after completing the ES HTTP call.** The projector
+   GenServer then calls `Checkpoint.upsert/3` separately. This is the pattern already
+   documented in ARCHITECTURE.md and requires no change to the projector GenServer.
+
+2. **`write/4` returns an ES write descriptor without committing.** The GenServer commits and
+   then writes the checkpoint. This option reduces coupling but requires the GenServer to know
+   how to commit an ES descriptor.
+
+Option 1 is simpler and matches existing documentation. The projector GenServer already has
+conditional logic for adapter type (Ecto uses `Ecto.Multi`, others do post-write checkpoint).
 
 ---
 
-## MVP Definition
+## MVP Definition for v1.1 ES Adapter
 
-### Launch With (v1 — this milestone, Postgres/Ecto adapter)
+### Must Have (Core adapter — enables any ES projection)
 
-Minimum viable projection subsystem. All table stakes + the key differentiators that justify building Orkestra over using Commanded directly.
+- `Orkestra.Projection.Storage.Elasticsearch` implementing `write/4` (single-doc upsert) and `reset/2` (delete-all or drop+recreate)
+- `index_mapping/0` optional callback added to `Orkestra.Projector` behaviour
+- `document_id/1` optional callback added to `Orkestra.Projector` behaviour (default from event aggregate ID)
+- Index existence check + creation on projector start (using `Snap.Indexes.create/4`)
+- Versioned index naming convention (`base_YYYYMMDDTHHMMSS`)
+- `Snap` added as optional dep in `mix.exs` (same pattern as `:amqp`, `:spear`)
 
-- [ ] **Projector macro/behaviour** — `use Orkestra.Projector` with `project/2` DSL (event module → Ecto.Multi function)
-- [ ] **Async consumption via message bus** — reuse existing `MessageBus` abstraction; projector is a supervised GenServer consumer
-- [ ] **Per-projector checkpoint persistence** — checkpoint table in Postgres, updated atomically with read-model write
-- [ ] **Resume after restart** — read checkpoint on init, pass to message bus `start_from`
-- [ ] **Full rebuild / replay** — drop tables + checkpoint → replay from event store → hand off to bus at caught-up position
-- [ ] **In-order error handling: retry → park → halt** — configurable max_retries per projector; dead-letter table; halt on exhaustion
-- [ ] **Dead-letter / park table** — Postgres table with (projector_name, event_position, event_data, error, attempts, parked_at)
-- [ ] **Per-projection isolated migrations** — each projector declares its own migration module; `mix orkestra.projector.migrate`, `rollback`, `drop` tasks
-- [ ] **Ecto-first read access** — no framework needed; developers query their schemas with `Repo.all/2`, etc.
-- [ ] **Projection lag + checkpoint telemetry** — OTel spans per event; lag gauge, checkpoint gauge, events_processed counter, events_failed counter
-- [ ] **Rebuild progress telemetry** — rebuild progress gauge (events_done/total)
-- [ ] **Config cleanup (`:ultimus` → `:orkestra` bug fix)** — fix config key bug; establish clean per-projection repo config story
+### Should Have (Makes the adapter production-ready)
 
-### Add After Validation (v1.x)
+- Batch indexing during catch-up/rebuild via `Snap.Bulk.perform/4` (configurable `batch_size`, default 500)
+- Zero-downtime rebuild via `Snap.Indexes.hotswap/5` wrapping the replay stream
+- `Snap.Indexes.cleanup/4` integration to drop old versioned indexes after alias swap
+- OTel spans for: single-doc write, bulk flush, alias swap, cleanup (consistent with existing Telemetry module)
 
-- [ ] **Optional generated `Queries` module** — `list/1` paged, `get_by/2`; generated via `use Orkestra.Projector.Queries`; prototype and refine based on real usage
-- [ ] **MCP `gen_projection` / `gen_read_model`** — code generator for projector + schema + migration + optional Queries module; introspection in `domain_map` and `list_projections` resources
-- [ ] **Dead-letter drain / resume UI** — mix task or MCP tool to inspect parked events, retry or discard, and resume halted projector
+### Nice to Have (Developer ergonomics — add after core is proven)
 
-### Future Consideration (v2+ — subsequent milestones)
-
-- [ ] **MongoDB adapter** — projector storage adapter for MongoDB; reuses shared lifecycle, adds Mongo-idiomatic writes and queries
-- [ ] **Elasticsearch adapter: index mappings + versioned index naming** — `index_mapping/0` callback; versioned suffix naming convention
-- [ ] **Elasticsearch adapter: bulk indexing during replay** — buffer + flush in configurable batch sizes during catch-up
-- [ ] **Elasticsearch adapter: zero-downtime alias swap** — blue-green rebuild via alias; replay into shadow index; atomic alias swap on catch-up
-- [ ] **Elasticsearch adapter: search query helpers** — ES-idiomatic `Queries` module (search by field, full-text, aggregations)
+- `Orkestra.Projection.ES.Query` — pipe-based query DSL builder producing ES Query DSL maps
+- Optional `ES.Queries` module (`search/1`, `get/1`, `list/1`)
+- MCP `gen_es_projection` generator
+- Mix task `mix orkestra.projection.es.rebuild ProjectorName` that triggers hotswap rebuild
 
 ---
 
 ## Feature Prioritization Matrix
 
-| Feature | User Value | Implementation Cost | Priority |
-|---------|------------|---------------------|----------|
-| Projector macro/behaviour | HIGH | MEDIUM | P1 |
-| Async consumption via message bus | HIGH | LOW | P1 |
-| Per-projector checkpoint persistence | HIGH | MEDIUM | P1 |
-| Resume after restart | HIGH | LOW | P1 |
-| Full rebuild / replay | HIGH | HIGH | P1 |
-| In-order error: retry → park → halt | HIGH | HIGH | P1 |
-| Dead-letter / park table | HIGH | MEDIUM | P1 |
-| Per-projection isolated migrations | HIGH | HIGH | P1 |
-| Ecto-first read access | HIGH | LOW | P1 |
-| Lag + checkpoint telemetry | MEDIUM | MEDIUM | P1 |
-| Rebuild progress telemetry | MEDIUM | LOW | P1 |
-| Config bug fix (`:ultimus` → `:orkestra`) | MEDIUM | LOW | P1 |
-| Optional generated Queries module | MEDIUM | MEDIUM | P2 |
-| MCP gen_projection / introspection | MEDIUM | MEDIUM | P2 |
-| Dead-letter drain/resume tooling | MEDIUM | LOW | P2 |
-| MongoDB adapter | MEDIUM | HIGH | P3 |
-| ES adapter: index mappings + versioning | HIGH (ES users) | HIGH | P3 |
-| ES adapter: bulk indexing | HIGH (ES users) | MEDIUM | P3 |
-| ES adapter: zero-downtime alias swap | HIGH (ES users) | HIGH | P3 |
-| ES adapter: search query helpers | MEDIUM (ES users) | MEDIUM | P3 |
+| Feature | User Value | Cost | Priority |
+|---------|------------|------|----------|
+| `Storage` behaviour implementation (write/4, reset/2) | HIGH | LOW | P1 |
+| `index_mapping/0` + `document_id/1` callbacks | HIGH | LOW | P1 |
+| Index existence check on start | HIGH | LOW | P1 |
+| Versioned index naming | HIGH | LOW | P1 |
+| Snap optional dep wiring | HIGH | LOW | P1 |
+| Batch indexing during catch-up | HIGH | MEDIUM | P1 |
+| Zero-downtime alias swap rebuild | HIGH | HIGH | P1 |
+| OTel spans for ES operations | MEDIUM | LOW | P1 |
+| ES query DSL builder | MEDIUM | HIGH | P2 |
+| Optional ES Queries module | MEDIUM | MEDIUM | P2 |
+| Mix task `es.rebuild` | MEDIUM | LOW | P2 |
+| MCP `gen_es_projection` | LOW | MEDIUM | P3 |
 
 **Priority key:**
-- P1: Must have for this milestone launch
-- P2: Should have; add in v1.x after core is validated
-- P3: Future milestone (MongoDB or Elasticsearch adapter sprints)
+- P1: Required for v1.1 milestone launch
+- P2: Should have; add before calling v1.1 complete if time allows
+- P3: Defer to v1.2 or standalone PR after v1.1
 
 ---
 
-## Competitor Feature Analysis
+## Technical Reference: Snap API Surface (Verified HIGH confidence)
 
-| Feature | Commanded (Elixir) | Our Approach |
-|---------|-------------------|--------------|
-| Projector DSL | `project EventType do ... end` via Ecto.Multi | Same pattern; `project EventType, fn event, multi -> ... end` |
-| Checkpoint persistence | Atomic with write in same transaction | Same; table per projector not shared |
-| Error handling | `error/3` → `:retry`, `:skip`, `{:stop, reason}` — `:skip` is the escape hatch | `error/3` → `:retry`, `{:park_and_halt, reason}` — halt is default, skip requires explicit opt-in |
-| Rebuild / reset | `before_reset/0` callback; drop + replay | `Orkestra.Projector.rebuild/1` — drop schema + checkpoint → replay from event store |
-| Per-projection migrations | Not supported — shared app Ecto repo | Per-projection isolated migration history; independent migrate/rollback/drop |
-| Lag telemetry | Not built-in | First-class OTel gauge: lag = head_position - checkpoint |
-| Rebuild progress | Not built-in | OTel gauge: rebuild_progress = events_done/total |
-| Generated query helpers | Not built-in | Optional `Queries` module (list/1, get_by/2) |
-| MCP code generation | Not applicable | `gen_projection`, `gen_read_model` in orkestra_mcp |
-| Elasticsearch adapter | Not available | Future milestone: mapping + versioned reindex + alias swap + bulk |
-| MongoDB adapter | Not available | Future milestone |
+### Bulk Operations (`Snap.Bulk`)
+
+```elixir
+# perform/4 signature
+Snap.Bulk.perform(stream :: Enumerable.t(), cluster :: module(), index :: String.t(), opts :: keyword())
+# Returns: :ok | {:error, Snap.BulkError.t()}
+
+# Action types (all implement Snap.Bulk.Action protocol)
+%Snap.Bulk.Action.Index{id: "doc-id", doc: %{field: "value"}}    # create or replace
+%Snap.Bulk.Action.Create{id: "doc-id", doc: %{field: "value"}}   # create only (fails if exists)
+%Snap.Bulk.Action.Update{id: "doc-id", doc: %{field: "value"}}   # partial update
+%Snap.Bulk.Action.Delete{id: "doc-id"}                            # delete
+
+# Key opts
+# page_size: 5_000 (default) — actions per batch
+# page_wait: 15_000 (default) — ms between batches
+# max_errors: nil (default, run to completion)
+```
+
+For Orkestra's ES adapter, use a smaller `page_size` (e.g., 500) and set `page_wait: 0`
+during bulk replay to maximize throughput. The Snap default of 5,000 is generous; 500 is
+safer for document-heavy projections.
+
+### Index / Alias Management (`Snap.Indexes`)
+
+```elixir
+# Zero-downtime hotswap
+Snap.Indexes.hotswap(stream, cluster, alias_name, mapping, opts)
+# Takes: Enumerable of Snap.Bulk.Action structs
+# Does: create versioned index → bulk load → refresh → alias swap → cleanup old indexes
+# Returns: :ok | Snap.Cluster.error() | {:error, Snap.BulkError.t()}
+
+# Alias management
+Snap.Indexes.alias(cluster, versioned_index_name, alias_name, opts)
+# Creates alias, removing any existing aliases on other indexes for that alias name
+
+# Versioned index listing
+Snap.Indexes.list_starting_with(cluster, prefix, opts)
+# Returns: {:ok, [String.t()]} — all indexes whose name starts with prefix
+
+# Cleanup old versioned indexes
+Snap.Indexes.cleanup(cluster, alias_name, preserve :: non_neg_integer(), opts)
+# Deletes all but the most recent `preserve` (default 2) versioned indexes
+
+# Create index with explicit mapping
+Snap.Indexes.create(cluster, index_name, mapping, opts)
+# mapping is %{"mappings" => %{"dynamic" => "strict", "properties" => %{...}}}
+```
+
+### Single-Document Operations (`Snap.Document`)
+
+```elixir
+# Index (create or replace)
+Snap.Document.index(cluster, index, type \\ nil, id, body, opts)
+
+# Get
+Snap.Document.get(cluster, index, type \\ nil, id, opts)
+```
+
+### Search (`Snap.Search`)
+
+```elixir
+Snap.Search.search(cluster, index, query_map, opts)
+# query_map is a plain Elixir map matching ES Query DSL structure
+# Returns: {:ok, response_map} | {:error, reason}
+```
+
+---
+
+## ES Query DSL Design Reference
+
+The proposed `Orkestra.Projection.ES.Query` module should follow the pipe-pattern established
+by ExlasticSearch (the most Elixir-idiomatic existing library) and the immutable-builder
+pattern from Python elasticsearch-dsl. No external dep required — pure Elixir map building.
+
+Proposed API sketch (not authoritative, for roadmap scoping only):
+
+```elixir
+# Builder pattern (pipe-based, idiomatic Elixir)
+import Orkestra.Projection.ES.Query
+
+result =
+  search()
+  |> must(match(:title, "elixir"))
+  |> must(term(:status, :active))
+  |> filter(range(:inserted_at, gte: ~D[2026-01-01]))
+  |> aggs(:by_status, terms(:status))
+  |> size(20)
+  |> from(0)
+  |> to_query()
+
+# Produces:
+# %{
+#   "query" => %{
+#     "bool" => %{
+#       "must" => [
+#         %{"match" => %{"title" => "elixir"}},
+#         %{"term" => %{"status" => "active"}}
+#       ],
+#       "filter" => [%{"range" => %{"inserted_at" => %{"gte" => "2026-01-01"}}}]
+#     }
+#   },
+#   "aggs" => %{"by_status" => %{"terms" => %{"field" => "status"}}},
+#   "size" => 20,
+#   "from" => 0
+# }
+
+# Then execute via Snap
+Snap.Search.search(MyApp.Cluster, "orders", result)
+```
+
+---
+
+## ES/OpenSearch Compatibility Notes (MEDIUM confidence)
+
+Snap explicitly claims ES and OpenSearch support. The key compatibility constraints:
+
+- **ES 8.x vs OpenSearch 2.x+:** Both removed mapping types (typeless). The adapter should
+  never include a `_type` field. Use `PUT /{index}/_doc/{id}` not `PUT /{index}/{type}/{id}`.
+- **Security APIs differ:** Orkestra does not call security APIs. Snap authentication is
+  header-based (Basic Auth), which works identically on both.
+- **Index template API:** Snap uses `_index_template` (composable, ES 7.8+/OS 1.x+). Not a
+  concern for the Orkestra adapter which manages indexes directly, not via templates.
+- **OpenSearch 2.x** is compatible with the ES 7.10 API surface that Snap targets. No known
+  incompatibilities for the operations Orkestra needs (index create, bulk, alias, search).
+- **AWS OpenSearch Service:** Uses HTTP(S) with SigV4 auth. Snap's `Snap.Auth` is pluggable;
+  an SigV4 auth module would be needed for AWS deployments. Out of scope for v1.1 but the
+  pluggable auth design accommodates it.
 
 ---
 
 ## Sources
 
-- [commanded-ecto-projections (GitHub)](https://github.com/commanded/commanded-ecto-projections) — projection DSL, Ecto.Multi, checkpoint, error/3 — MEDIUM confidence
-- [Commanded.Event.Handler (HexDocs)](https://commanded.hexdocs.pm/Commanded.Event.Handler.html) — error/3 return values, start_from, consistency modes — MEDIUM confidence
-- [Projections and Read Models in Event-Driven Architecture (event-driven.io)](https://event-driven.io/en/projections_and_read_models_in_event_driven_architecture/) — left-fold pattern, idempotency, blue-green rebuild, truncate-and-rebuild — LOW confidence (web)
-- [Some CQRS and Event Sourcing Pitfalls (AxonIQ)](https://www.axoniq.io/blog/some-cqrs-and-event-sourcing-pitfalls) — synchronous projection risks, normalization anti-pattern, CUD event pitfall — LOW confidence (web)
-- [Zero Downtime Reindex in Elasticsearch](https://tuleism.github.io/blog/2021/elasticsearch-zero-downtime-reindex/) — alias swap, versioned index naming — LOW confidence (web)
-- [Blue-Green Deployment in Elasticsearch (widhianbramantya.com)](https://widhianbramantya.com/elasticsearch/blue-green-deployment-in-elasticsearch-safe-reindexing-and-zero-downtime-upgrades/) — blue-green pattern, dual write, atomic alias swap — LOW confidence (web)
-- [Kafka Consumer Lag Monitoring (Sematext)](https://sematext.com/blog/kafka-consumer-lag-offsets-monitoring/) — lag metric definition (head - checkpoint), alert patterns — LOW confidence (web, adapted to ES context)
-- [Elixir Commanded (Curiosum)](https://curiosum.com/blog/segregate-responsibilities-with-elixir-commanded) — practical Commanded usage patterns — LOW confidence (web)
-- [Building Conduit (Leanpub)](https://leanpub.com/buildingconduit/read) — commanded-ecto-projections in practice — LOW confidence (web)
-- [CQRS and Event Sourcing: Implementation Guide (knowledgelib.io)](https://knowledgelib.io/software/system-design/cqrs-event-sourcing/2026) — anti-patterns: idempotency, DLQ, out-of-order events — LOW confidence (web)
+- [Snap v0.16.0 Hexdocs — Snap.Indexes](https://snap.hexdocs.pm/Snap.Indexes.html) — hotswap, alias, versioned index, cleanup — HIGH confidence
+- [Snap v0.16.0 Hexdocs — Snap.Bulk](https://snap.hexdocs.pm/Snap.Bulk.html) — perform/4, action types, page_size, page_wait — HIGH confidence
+- [Snap v0.16.0 Hexdocs — README](https://snap.hexdocs.pm/readme.html) — cluster setup, Finch dep, OpenSearch support — HIGH confidence
+- [Snap GitHub — breakroom/snap](https://github.com/breakroom/snap) — overview, features, OpenSearch claim — MEDIUM confidence
+- [Elasticsearch Bulk API docs](https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-bulk) — NDJSON format, action types, response format, `require_alias` param — HIGH confidence
+- [OpenSearch Bulk API docs](https://docs.opensearch.org/latest/api-reference/document-apis/bulk/) — compatibility confirmation — HIGH confidence
+- [Python elasticsearch-dsl Search DSL](https://elasticsearch-dsl.readthedocs.io/en/latest/search_dsl.html) — immutable builder pattern, must/filter/aggs API design — HIGH confidence
+- [ExlasticSearch GitHub (Frameio)](https://github.com/Frameio/exlasticsearch) — Elixir pipe-based query DSL pattern: `must(match(...))`, `filter(term(...))` — MEDIUM confidence
+- [Hex.pm elasticsearch packages](https://hex.pm/packages?search=elasticsearch) — confirmed Snap is most actively maintained (46K downloads, 1 month ago); elastix abandoned — HIGH confidence
+- [Zero Downtime Reindex in Elasticsearch](https://tuleism.github.io/blog/2021/elasticsearch-zero-downtime-reindex/) — alias swap pattern rationale — LOW confidence (web, 2021)
+- [Projecting Marten events to Elasticsearch](https://event-driven.io/en/projecting_from_marten_to_elasticsearch/) — ES projection pattern in .NET (batch on catch-up, single-doc on live) — MEDIUM confidence
+- [ES Bulk API performance — Opster](https://opster.com/guides/elasticsearch/how-tos/optimizing-elasticsearch-bulk-indexing-high-performance/) — batch size guidance (1K–5K ops, 5–15 MB) — LOW confidence (web)
+- [Orkestra ARCHITECTURE.md](/.planning/research/ARCHITECTURE.md) — existing at-least-once checkpoint semantics for non-Ecto adapters — HIGH confidence (first-party)
+- [Orkestra STACK.md](/.planning/research/STACK.md) — Snap selection rationale, optional dep pattern — HIGH confidence (first-party)
 
 ---
 
-*Feature research for: Orkestra projection / read-model subsystem*
-*Researched: 2026-06-24*
+*Feature research for: Orkestra v1.1 — Elasticsearch/OpenSearch Projection Adapter*
+*Researched: 2026-06-25*

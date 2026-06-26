@@ -8,6 +8,11 @@ WORKDIR /app
 COPY mix.exs mix.lock ./
 COPY lib lib
 
+# Build the MCP escript
+COPY orkestra_mcp orkestra_mcp
+RUN cd orkestra_mcp && mix local.hex --force && mix local.rebar --force \
+    && mix deps.get && mix escript.build
+
 # Copy the example app
 COPY examples/order_system examples/order_system
 

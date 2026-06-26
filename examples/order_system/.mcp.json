@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "orkestra": {
+      "command": "../../orkestra_mcp/orkestra_mcp",
+      "args": ["--project-dir", "."]
+    }
+  }
+}

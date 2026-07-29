@@ -46,6 +46,24 @@ defmodule OrderSystem.Orders.Queries do
     )
   end
 
+  @doc """
+  Finds orders containing an item that matches **both** conditions at once:
+  the given SKU and at least `min_quantity` units — on the same line item.
+
+  Demonstrates the correlated nested-embed filter form: because
+  `OrderSystem.Search.Order` declares `embeds_many :items, ..., mode: :nested`,
+  the sub-filters below compile to a single `nested` query and must hold on
+  the **same** item entry (with `mode: :object` they would be evaluated
+  independently across items, allowing cross-item false positives).
+  """
+  def with_item(sku, min_quantity \\ 1, opts \\ []) do
+    Orders.get_paged(
+      filters: [items: [sku: sku, quantity: {:gte, min_quantity}]],
+      page: Keyword.get(opts, :page, 1),
+      page_size: Keyword.get(opts, :page_size, 20)
+    )
+  end
+
   @doc "Finds orders above a total threshold, most expensive first."
   def expensive_orders(min_total, opts \\ []) do
     Orders.get_paged(

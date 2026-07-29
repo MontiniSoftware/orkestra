@@ -29,6 +29,11 @@ defmodule OrderSystem.Search.Order do
     field(:cancel_reason, :text)
     field(:cancelled_at, :date)
     field(:placed_at, :date, sortable: true)
+    # Order line items as nested embedded structs. `mode: :nested` keeps the
+    # fields of each item correlated, so a filter like
+    # `filters: [items: [sku: "X", quantity: {:gte, 2}]]` only matches orders
+    # where the SAME item satisfies both conditions.
+    embeds_many(:items, OrderSystem.Search.OrderItem, mode: :nested)
     # Dynamic facets (attribute {code, name} + values {code, name}) — e.g. the
     # product category — aggregatable via `get_paged(facets: true)`.
     facets(:attributes)

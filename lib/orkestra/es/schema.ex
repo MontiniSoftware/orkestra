@@ -85,6 +85,60 @@ defmodule Orkestra.ES.Schema do
   structure defined by `Orkestra.ES.Facet` (attribute `code`/`name` owning
   values `code`/`name`/`count`). It maps to a flattened `nested` field
   (`attr_code`/`attr_name`/`value_code`/`value_name`).
+
+  ## Embedded schemas
+
+  A schema declared with `embedded: true` describes a **nested struct** that
+  lives inside a root document rather than an index of its own:
+
+      defmodule MyApp.Search.OrderItem do
+        use Orkestra.ES.Schema, embedded: true
+
+        schema do
+          field :sku,      :keyword
+          field :name,     :text, searchable: true, analyzer: :product_search
+          field :quantity, :integer
+        end
+      end
+
+  Root-only constructs are forbidden on an embedded schema and raise an
+  `ArgumentError` at compile time: the `:index` / `:cultures` /
+  `:default_culture` options, the `settings` block, `primary_key: true` fields,
+  and the `facets` slot. Analyzer references (`analyzer: :name`) are allowed —
+  they are **resolved by the root schema**, which validates per-culture
+  coverage over its entire embed tree. Recursive embedding (an embedded schema
+  that itself declares `embeds_one`/`embeds_many`) is fully supported.
+
+  An embedded schema still generates the struct, `__es_schema__/1`
+  introspection (including `:embedded?` → `true` and `:analyzer_refs`),
+  `to_doc/1` and `from_hit/1`, so it works standalone in tests.
+
+  ## Embedding into a root schema
+
+  Inside the `schema` block of a root (or of another embedded schema):
+
+      embeds_one  :shipping, MyApp.Search.Address                 # mode: :object
+      embeds_many :items,    MyApp.Search.OrderItem, mode: :nested
+
+  `embeds_one` defaults the struct field to `nil`, `embeds_many` to `[]`. The
+  target module must be a schema compiled with `embedded: true`. Embed names
+  are exposed via `__es_schema__(:embeds)` (not `:field_names`) as maps
+  `%{name:, schema:, cardinality: :one | :many, mode: :object | :nested}`.
+
+  ### `mode: :object` vs `mode: :nested`
+
+    * `:object` (the default) maps the embed as a plain `"object"`. ES
+      flattens object arrays into parallel value lists, so **correlation
+      between fields of the same entry is lost**: with items
+      `[%{sku: "A", qty: 1}, %{sku: "B", qty: 5}]` a combined filter
+      `sku == "A" and qty >= 5` **matches** (false positive) because each
+      condition is satisfied by *some* entry. Cheapest option; fine for
+      `embeds_one` or when cross-field correlation does not matter.
+    * `:nested` maps the embed as `"nested"`, preserving per-entry
+      correlation (each entry is indexed as a hidden internal document): the
+      filter above does **not** match. Costs extra internal documents and
+      heavier queries — use it when combined filters on `embeds_many` entries
+      must be correlated.
   """
 
   alias Orkestra.ES.Schema.Compiler
@@ -94,8 +148,9 @@ defmodule Orkestra.ES.Schema do
     index = Keyword.get(opts, :index)
     cultures = Keyword.get(opts, :cultures, [])
     default_culture = Keyword.get(opts, :default_culture)
+    embedded? = Keyword.get(opts, :embedded, false)
 
-    Compiler.validate_base!(__CALLER__.module, index, cultures, default_culture)
+    Compiler.validate_base!(__CALLER__.module, index, cultures, default_culture, embedded?)
 
     quote do
       import Orkestra.ES.Schema,
@@ -106,6 +161,10 @@ defmodule Orkestra.ES.Schema do
           field: 2,
           field: 3,
           facets: 1,
+          embeds_one: 2,
+          embeds_one: 3,
+          embeds_many: 2,
+          embeds_many: 3,
           analyzer: 1,
           analyzer: 2,
           filter: 1,
@@ -121,10 +180,12 @@ defmodule Orkestra.ES.Schema do
       Module.register_attribute(__MODULE__, :es_fields, accumulate: true)
       Module.register_attribute(__MODULE__, :es_facets, accumulate: true)
       Module.register_attribute(__MODULE__, :es_analysis, accumulate: true)
+      Module.register_attribute(__MODULE__, :es_embeds, accumulate: true)
 
       @es_index unquote(index)
       @es_cultures unquote(cultures)
       @es_default_culture unquote(default_culture)
+      @es_embedded unquote(embedded?)
       @es_settings_opts []
 
       @before_compile Orkestra.ES.Schema
@@ -136,11 +197,20 @@ defmodule Orkestra.ES.Schema do
   @doc """
   Declares index-level settings and, in its block, the analysis definitions
   (`analyzer/2`, `filter/2`, `tokenizer/2`, `char_filter/2`, `normalizer/2`).
+
+  Root-only: an embedded schema (`embedded: true`) raises an `ArgumentError`
+  at compile time, since index settings and analyzers belong to the root.
   """
   defmacro settings(opts \\ [], do_block) do
     block = Keyword.fetch!(do_block, :do)
 
     quote do
+      if @es_embedded do
+        raise ArgumentError,
+              "#{inspect(__MODULE__)}: an embedded schema must not declare a `settings` " <>
+                "block (index settings and analyzers are root-only)"
+      end
+
       @es_settings_opts unquote(opts)
       unquote(block)
     end
@@ -164,6 +234,43 @@ defmodule Orkestra.ES.Schema do
   defmacro facets(name) do
     quote do
       @es_facets unquote(name)
+    end
+  end
+
+  @doc """
+  Declares a single embedded struct field.
+
+  `schema` must be a module compiled with `use Orkestra.ES.Schema,
+  embedded: true`. The struct field defaults to `nil`.
+
+  ## Options
+
+    * `mode:` — `:object` (default) or `:nested`. See the module doc
+      ("`mode: :object` vs `mode: :nested`") for the flattening /
+      correlation trade-off.
+  """
+  defmacro embeds_one(name, schema, opts \\ []) do
+    quote do
+      @es_embeds {unquote(name), unquote(schema), :one, unquote(opts)}
+    end
+  end
+
+  @doc """
+  Declares a list of embedded structs.
+
+  `schema` must be a module compiled with `use Orkestra.ES.Schema,
+  embedded: true`. The struct field defaults to `[]`.
+
+  ## Options
+
+    * `mode:` — `:object` (default) or `:nested`. `:object` flattens the
+      array (combined filters may produce cross-entry false positives);
+      `:nested` preserves per-entry correlation at extra index/query cost.
+      See the module doc for the full trade-off.
+  """
+  defmacro embeds_many(name, schema, opts \\ []) do
+    quote do
+      @es_embeds {unquote(name), unquote(schema), :many, unquote(opts)}
     end
   end
 
@@ -200,15 +307,22 @@ defmodule Orkestra.ES.Schema do
     index = Module.get_attribute(mod, :es_index)
     cultures = Module.get_attribute(mod, :es_cultures) || []
     default_culture = Module.get_attribute(mod, :es_default_culture)
+    embedded? = Module.get_attribute(mod, :es_embedded) || false
     settings_opts = Module.get_attribute(mod, :es_settings_opts) || []
     fields = mod |> Module.get_attribute(:es_fields) |> Enum.reverse()
     facets = mod |> Module.get_attribute(:es_facets) |> Enum.reverse()
     analysis = mod |> Module.get_attribute(:es_analysis) |> Enum.reverse()
+    embeds = mod |> Module.get_attribute(:es_embeds) |> Enum.reverse()
 
-    {field_meta, facets_field} = Compiler.compile!(mod, fields, facets, analysis, cultures)
+    {field_meta, facets_field, embeds_meta, analyzer_refs} =
+      Compiler.compile!(mod, fields, facets, analysis, settings_opts, cultures, embeds, embedded?)
 
     struct_fields =
       Enum.map(field_meta, fn %{name: name, opts: opts} -> {name, Keyword.get(opts, :default)} end) ++
+        Enum.map(embeds_meta, fn
+          %{name: name, cardinality: :one} -> {name, nil}
+          %{name: name, cardinality: :many} -> {name, []}
+        end) ++
         if facets_field, do: [{facets_field, []}], else: []
 
     primary_key =
@@ -219,6 +333,7 @@ defmodule Orkestra.ES.Schema do
     sortable_fields = for %{name: n, opts: o} <- field_meta, o[:sortable], do: n
 
     escaped_field_meta = Macro.escape(field_meta)
+    escaped_embeds_meta = Macro.escape(embeds_meta)
     escaped_settings_opts = Macro.escape(settings_opts)
     escaped_analysis = Macro.escape(analysis)
 
@@ -293,70 +408,89 @@ defmodule Orkestra.ES.Schema do
         end
       end
 
-    quote do
-      defstruct unquote(Macro.escape(struct_fields))
+    common =
+      quote do
+        defstruct unquote(Macro.escape(struct_fields))
 
-      @typedoc "The read-model struct generated for this schema."
-      @type t :: %__MODULE__{}
+        @typedoc "The read-model struct generated for this schema."
+        @type t :: %__MODULE__{}
 
-      @doc """
-      Introspects the compiled schema.
+        @doc """
+        Introspects the compiled schema.
 
-      Accepts `:index`, `:cultures`, `:default_culture`, `:fields`,
-      `:field_names`, `:primary_key`, `:searchable_fields`, `:facets_field`,
-      and `:sortable_fields`.
-      """
-      @spec __es_schema__(atom()) :: term()
-      def __es_schema__(:index), do: unquote(index)
-      def __es_schema__(:cultures), do: unquote(cultures)
-      def __es_schema__(:default_culture), do: unquote(default_culture)
-      def __es_schema__(:fields), do: unquote(escaped_field_meta)
-      def __es_schema__(:field_names), do: unquote(field_names)
-      def __es_schema__(:primary_key), do: unquote(primary_key)
-      def __es_schema__(:searchable_fields), do: unquote(searchable_fields)
-      def __es_schema__(:facets_field), do: unquote(facets_field)
-      def __es_schema__(:sortable_fields), do: unquote(sortable_fields)
+        Accepts `:index`, `:cultures`, `:default_culture`, `:fields`,
+        `:field_names`, `:primary_key`, `:searchable_fields`, `:facets_field`,
+        `:sortable_fields`, `:embeds`, `:embedded?`, and `:analyzer_refs`.
+        """
+        @spec __es_schema__(atom()) :: term()
+        def __es_schema__(:index), do: unquote(index)
+        def __es_schema__(:cultures), do: unquote(cultures)
+        def __es_schema__(:default_culture), do: unquote(default_culture)
+        def __es_schema__(:fields), do: unquote(escaped_field_meta)
+        def __es_schema__(:field_names), do: unquote(field_names)
+        def __es_schema__(:primary_key), do: unquote(primary_key)
+        def __es_schema__(:searchable_fields), do: unquote(searchable_fields)
+        def __es_schema__(:facets_field), do: unquote(facets_field)
+        def __es_schema__(:sortable_fields), do: unquote(sortable_fields)
+        def __es_schema__(:embeds), do: unquote(escaped_embeds_meta)
+        def __es_schema__(:embedded?), do: unquote(embedded?)
+        def __es_schema__(:analyzer_refs), do: unquote(analyzer_refs)
 
-      unquote(culture_guard)
-      unquote(culture_fns)
+        @doc "Converts the struct into a string-keyed indexable document."
+        @spec to_doc(t()) :: map()
+        def to_doc(%__MODULE__{} = struct) do
+          Orkestra.ES.Schema.Casting.to_doc(
+            struct,
+            unquote(escaped_field_meta),
+            unquote(facets_field),
+            unquote(escaped_embeds_meta)
+          )
+        end
 
-      @doc "Returns the full index mapping for the default culture."
-      @spec mapping() :: map()
-      def mapping, do: __build_mapping__(unquote(mapping_zero_culture))
-
-      defp __build_mapping__(culture) do
-        Orkestra.ES.Schema.Mapping.build(
-          unquote(escaped_field_meta),
-          unquote(facets_field),
-          unquote(escaped_settings_opts),
-          unquote(escaped_analysis),
-          culture
-        )
+        @doc "Rebuilds the struct from an Elasticsearch `_source` map."
+        @spec from_hit(map()) :: t()
+        def from_hit(source) when is_map(source) do
+          Orkestra.ES.Schema.Casting.from_hit(
+            source,
+            __MODULE__,
+            unquote(escaped_field_meta),
+            unquote(facets_field),
+            unquote(escaped_embeds_meta)
+          )
+        end
       end
 
-      @doc "Returns the deterministic SHA-256 hash of the default-culture mapping."
-      @spec mapping_hash() :: String.t()
-      def mapping_hash, do: Orkestra.ES.Schema.Mapping.mapping_hash(mapping())
+    root_only =
+      quote do
+        unquote(culture_guard)
+        unquote(culture_fns)
 
-      @doc "Converts the struct into a string-keyed indexable document."
-      @spec to_doc(t()) :: map()
-      def to_doc(%__MODULE__{} = struct) do
-        Orkestra.ES.Schema.Casting.to_doc(
-          struct,
-          unquote(escaped_field_meta),
-          unquote(facets_field)
-        )
+        @doc "Returns the full index mapping for the default culture."
+        @spec mapping() :: map()
+        def mapping, do: __build_mapping__(unquote(mapping_zero_culture))
+
+        defp __build_mapping__(culture) do
+          Orkestra.ES.Schema.Mapping.build(
+            unquote(escaped_field_meta),
+            unquote(facets_field),
+            unquote(escaped_embeds_meta),
+            unquote(escaped_settings_opts),
+            unquote(escaped_analysis),
+            culture
+          )
+        end
+
+        @doc "Returns the deterministic SHA-256 hash of the default-culture mapping."
+        @spec mapping_hash() :: String.t()
+        def mapping_hash, do: Orkestra.ES.Schema.Mapping.mapping_hash(mapping())
       end
 
-      @doc "Rebuilds the struct from an Elasticsearch `_source` map."
-      @spec from_hit(map()) :: t()
-      def from_hit(source) when is_map(source) do
-        Orkestra.ES.Schema.Casting.from_hit(
-          source,
-          __MODULE__,
-          unquote(escaped_field_meta),
-          unquote(facets_field)
-        )
+    if embedded? do
+      common
+    else
+      quote do
+        unquote(common)
+        unquote(root_only)
       end
     end
   end

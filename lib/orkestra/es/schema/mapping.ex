@@ -21,12 +21,25 @@ defmodule Orkestra.ES.Schema.Mapping do
   `culture` is `nil` for mono-culture schemas; otherwise it selects the
   matching per-culture analysis definitions. A definition without `for:` acts
   as a shared fallback and is always included.
+
+  `embeds_meta` (see `Orkestra.ES.Schema.Compiler.embed_meta/0`) contributes
+  one `"object"`/`"nested"` property per embed, whose `"properties"` are built
+  recursively from the embedded schema (multi-level embeds included).
+  `"dynamic" => "strict"` is set only at the mapping top level — Elasticsearch
+  inherits it down into object and nested properties.
   """
-  @spec build([Compiler.field_meta()], atom() | nil, keyword(), [tuple()], atom() | nil) :: map()
-  def build(field_meta, facets_field, settings_opts, analysis, culture) do
+  @spec build(
+          [Compiler.field_meta()],
+          atom() | nil,
+          [Compiler.embed_meta()],
+          keyword(),
+          [tuple()],
+          atom() | nil
+        ) :: map()
+  def build(field_meta, facets_field, embeds_meta, settings_opts, analysis, culture) do
     mappings = %{
       "dynamic" => "strict",
-      "properties" => build_properties(field_meta, facets_field)
+      "properties" => properties(field_meta, facets_field, embeds_meta)
     }
 
     case build_settings(settings_opts, analysis, culture) do
@@ -34,6 +47,38 @@ defmodule Orkestra.ES.Schema.Mapping do
       settings -> %{"settings" => settings, "mappings" => mappings}
     end
   end
+
+  @doc """
+  Builds the `"properties"` map for a set of fields, an optional facets slot,
+  and a list of embeds.
+
+  Each embed becomes `%{"type" => "object" | "nested", "properties" => ...}`
+  where the inner properties come from the embedded schema's own fields and
+  embeds, recursively. Public because it is the recursion step used for every
+  level of an embed tree.
+  """
+  @spec properties([Compiler.field_meta()], atom() | nil, [Compiler.embed_meta()]) :: map()
+  def properties(field_meta, facets_field, embeds_meta) do
+    field_meta
+    |> build_properties(facets_field)
+    |> Map.merge(embed_properties(embeds_meta))
+  end
+
+  defp embed_properties(embeds_meta) do
+    Map.new(embeds_meta, fn %{name: name, schema: schema, mode: mode} ->
+      inner =
+        properties(
+          schema.__es_schema__(:fields),
+          schema.__es_schema__(:facets_field),
+          schema.__es_schema__(:embeds)
+        )
+
+      {Atom.to_string(name), %{"type" => embed_type(mode), "properties" => inner}}
+    end)
+  end
+
+  defp embed_type(:nested), do: "nested"
+  defp embed_type(:object), do: "object"
 
   @doc """
   Returns the lowercase hexadecimal SHA-256 of a deterministic serialization

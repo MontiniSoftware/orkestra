@@ -20,7 +20,7 @@ defmodule OrderSystem.Orders.Projectors.OrderESProjector do
     event_store: Orkestra.EventStore.InMemory
 
   alias OrderSystem.Orders.Events.{OrderPlaced, OrderCancelled}
-  alias OrderSystem.Search.Order
+  alias OrderSystem.Search.{Order, OrderItem}
   alias Orkestra.ES.Facet
 
   project_es(OrderPlaced, fn event, _position ->
@@ -33,6 +33,16 @@ defmodule OrderSystem.Orders.Projectors.OrderESProjector do
       customer_email: event.data.customer_email,
       status: "placed",
       placed_at: DateTime.utc_now(),
+      # The event carries a single product line, so the nested `items` embed is
+      # derived from it: the SKU is a deterministic slug of the product name.
+      # An event with an explicit items list would map each entry here instead.
+      items: [
+        %OrderItem{
+          sku: sku_for(event.data.product_name),
+          name: event.data.product_name,
+          quantity: event.data.quantity
+        }
+      ],
       attributes: [
         %Facet.Attribute{
           code: "category",
@@ -44,6 +54,15 @@ defmodule OrderSystem.Orders.Projectors.OrderESProjector do
 
     {:ok, order}
   end)
+
+  # Derives a deterministic SKU slug from the product name (e.g.
+  # "Elixir in Action" -> "elixir-in-action").
+  defp sku_for(product_name) do
+    product_name
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9]+/, "-")
+    |> String.trim("-")
+  end
 
   project_es(OrderCancelled, fn event, _position ->
     order = %Order{

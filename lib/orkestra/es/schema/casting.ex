@@ -3,8 +3,8 @@ defmodule Orkestra.ES.Schema.Casting do
   Converts between an `Orkestra.ES.Schema` struct and its Elasticsearch
   document representation.
 
-  `to_doc/3` turns a struct into a string-keyed map ready for indexing;
-  `from_hit/4` rebuilds the struct from an `_source` map. The two are inverse
+  `to_doc/4` turns a struct into a string-keyed map ready for indexing;
+  `from_hit/5` rebuilds the struct from an `_source` map. The two are inverse
   for valid values, so `from_hit(to_doc(struct)) == struct`.
 
   Casting rules:
@@ -18,6 +18,10 @@ defmodule Orkestra.ES.Schema.Casting do
     * The facets slot is **flattened** on write (one entry per value) and
       **regrouped** on read (by `attr_code`, preserving the first-seen order and
       `attr_name`); read values always get `count: nil`.
+    * Embeds recurse through the embedded schema's own `to_doc/1` /
+      `from_hit/1` (multi-level embeds included): an `embeds_one` value of
+      `nil` stays `null`; an `embeds_many` list maps element-wise, and a
+      missing/`null` array reads back as `[]`.
 
   The module is pure and has no dependency on Snap.
   """
@@ -28,11 +32,16 @@ defmodule Orkestra.ES.Schema.Casting do
   @doc """
   Converts a schema struct into a string-keyed Elasticsearch document.
   """
-  @spec to_doc(struct(), [Compiler.field_meta()], atom() | nil) :: map()
-  def to_doc(struct, field_meta, facets_field) do
+  @spec to_doc(struct(), [Compiler.field_meta()], atom() | nil, [Compiler.embed_meta()]) :: map()
+  def to_doc(struct, field_meta, facets_field, embeds_meta \\ []) do
     base =
       Enum.reduce(field_meta, %{}, fn %{name: name, type: type, opts: opts}, acc ->
         Map.put(acc, Atom.to_string(name), encode_value(Map.get(struct, name), type, opts))
+      end)
+
+    base =
+      Enum.reduce(embeds_meta, base, fn embed, acc ->
+        Map.put(acc, Atom.to_string(embed.name), encode_embed(Map.get(struct, embed.name), embed))
       end)
 
     if facets_field do
@@ -46,11 +55,17 @@ defmodule Orkestra.ES.Schema.Casting do
   @doc """
   Rebuilds a schema struct of `module` from an Elasticsearch `_source` map.
   """
-  @spec from_hit(map(), module(), [Compiler.field_meta()], atom() | nil) :: struct()
-  def from_hit(source, module, field_meta, facets_field) do
+  @spec from_hit(map(), module(), [Compiler.field_meta()], atom() | nil, [Compiler.embed_meta()]) ::
+          struct()
+  def from_hit(source, module, field_meta, facets_field, embeds_meta \\ []) do
     base =
       Enum.map(field_meta, fn %{name: name, type: type, opts: opts} ->
         {name, decode_value(Map.get(source, Atom.to_string(name)), type, opts)}
+      end)
+
+    embed_kv =
+      Enum.map(embeds_meta, fn embed ->
+        {embed.name, decode_embed(Map.get(source, Atom.to_string(embed.name)), embed)}
       end)
 
     facet_kv =
@@ -61,8 +76,30 @@ defmodule Orkestra.ES.Schema.Casting do
         []
       end
 
-    struct(module, base ++ facet_kv)
+    struct(module, base ++ embed_kv ++ facet_kv)
   end
+
+  # -- embeds -----------------------------------------------------------------
+
+  # Encoding recurses through the embedded schema's generated `to_doc/1`, so
+  # multi-level embeds serialize naturally.
+  defp encode_embed(nil, _embed), do: nil
+
+  defp encode_embed(list, %{cardinality: :many, schema: schema}) when is_list(list),
+    do: Enum.map(list, &schema.to_doc/1)
+
+  defp encode_embed(value, %{cardinality: :one, schema: schema}), do: schema.to_doc(value)
+
+  # Decoding mirrors encoding via the embedded schema's `from_hit/1`. A
+  # missing/null `embeds_many` reads back as `[]` (the struct default).
+  defp decode_embed(nil, %{cardinality: :many}), do: []
+  defp decode_embed(nil, %{cardinality: :one}), do: nil
+
+  defp decode_embed(list, %{cardinality: :many, schema: schema}) when is_list(list),
+    do: Enum.map(list, &schema.from_hit/1)
+
+  defp decode_embed(value, %{cardinality: :one, schema: schema}) when is_map(value),
+    do: schema.from_hit(value)
 
   # -- encoding ---------------------------------------------------------------
 

@@ -17,6 +17,17 @@ defmodule Orkestra.ES.PagedQuery do
       `must` context so it contributes to the score. Requesting a search on a
       schema with no searchable fields returns `{:error, :no_searchable_fields}`.
 
+      Searchable fields inside embeds participate too. Fields reached through
+      `mode: :object` embeds enter the `multi_match` with their dotted path
+      (`"items.name"`). Fields inside `mode: :nested` embeds cannot be matched
+      by a root-level `multi_match` (an Elasticsearch limitation), so when any
+      nested embed carries searchable fields the `must` clause becomes an inner
+      `bool` `should` (`minimum_should_match: 1`) containing the root+object
+      `multi_match` plus one `nested` query (correct `path`) with a
+      `multi_match` on its fields for **each** such embed — recursively for
+      nested-inside-nested (composed paths). `{:error, :no_searchable_fields}`
+      is returned only when no searchable field exists anywhere in the tree.
+
     * `:filters` — a keyword list or map of `field => spec`. The clause is
       derived from the field's declared type:
 
@@ -32,8 +43,26 @@ defmodule Orkestra.ES.PagedQuery do
           value_code}` pairs. Each pair produces one `nested` query in `filter`
           context matching `attr_code` and `value_code` (a list of value codes
           becomes a `terms`). Multiple pairs are AND-combined.
+        * an embed name — the spec is a keyword list (or map) of sub-filters
+          over the embedded schema's fields, each derived from its declared
+          type exactly as above:
 
-      An unknown field returns `{:error, {:unknown_filter_field, field}}`.
+              filters: [items: [sku: "X", quantity: {:gte, 2}]]
+
+          For a `mode: :object` embed every sub-filter becomes an independent
+          clause on the dotted path (`"items.sku"`, `"items.quantity"`) in its
+          usual context. **Beware the cross-entry false positives**: with an
+          `embeds_many` in object mode the sub-filters are not correlated to
+          the same entry — a document matches if *any* entry satisfies each
+          condition separately. For a `mode: :nested` embed the sub-filters
+          are combined into **one** `nested` query with an inner `bool`, so
+          all conditions must hold on the **same** entry. Sub-filters may
+          recurse into deeper embeds by name. An unknown field inside an embed
+          returns `{:error, {:unknown_filter_field, "items.sku_typo"}}` with
+          the full dotted path.
+
+      An unknown top-level field returns
+      `{:error, {:unknown_filter_field, field}}`.
 
     * `:facets` — `false` (default), `true`, or a list of attribute codes.
       Requires the schema to declare a facets slot, otherwise
@@ -50,7 +79,9 @@ defmodule Orkestra.ES.PagedQuery do
     * `:sort` — a keyword list of `field => :asc | :desc`. The field must exist;
       a `:text` field is only sortable through its `keyword` sub-field, so it
       requires `keyword: true` or `sortable: true`, otherwise
-      `{:error, {:not_sortable, field}}`. The schema's `primary_key` is **always**
+      `{:error, {:not_sortable, field}}`. Sorting on embedded fields (either
+      the embed name or a dotted path) is **not supported** — a current
+      limitation — and returns `{:error, {:not_sortable, field}}`. The schema's `primary_key` is **always**
       appended as a final `asc` tiebreaker (unless already present), which keeps
       `search_after` cursors stable even when no sort is supplied.
 
@@ -135,20 +166,76 @@ defmodule Orkestra.ES.PagedQuery do
         {:ok, []}
 
       text ->
-        case schema.__es_schema__(:searchable_fields) do
-          [] ->
+        {flat_fields, nested_scopes} = collect_search_fields(schema, "")
+
+        cond do
+          flat_fields == [] and nested_scopes == [] ->
             {:error, :no_searchable_fields}
 
-          fields ->
-            names = Enum.map(fields, &Atom.to_string/1)
+          nested_scopes == [] ->
+            {:ok, [{:must, :multi_match, multi_match_body(text, flat_fields)}]}
 
-            {:ok,
-             [
-               {:must, :multi_match,
-                %{"query" => text, "fields" => names, "type" => "best_fields"}}
-             ]}
+          true ->
+            clauses =
+              flat_multi_match(text, flat_fields) ++
+                Enum.map(nested_scopes, &nested_search_query(text, &1))
+
+            {:ok, [{:must, :bool, %{"should" => clauses, "minimum_should_match" => 1}}]}
         end
     end
+  end
+
+  # Recursively collects the searchable field paths of a schema and its embed
+  # tree. Returns `{flat_fields, nested_scopes}`:
+  #
+  #   * `flat_fields` — dotted paths reachable from `prefix` without crossing a
+  #     nested boundary (own searchable fields + those of object-mode embeds,
+  #     recursively). These can be targeted by a plain `multi_match`.
+  #   * `nested_scopes` — one `%{path:, fields:, scopes:}` per nested embed that
+  #     contains at least one searchable field anywhere in its subtree (scopes
+  #     with nothing searchable are pruned). Each requires a `nested` query.
+  defp collect_search_fields(schema, prefix) do
+    flat = for f <- schema.__es_schema__(:searchable_fields), do: prefix <> Atom.to_string(f)
+
+    Enum.reduce(schema.__es_schema__(:embeds), {flat, []}, fn embed, {flat_acc, scope_acc} ->
+      child_prefix = prefix <> Atom.to_string(embed.name) <> "."
+      {child_flat, child_scopes} = collect_search_fields(embed.schema, child_prefix)
+
+      case embed.mode do
+        :object ->
+          {flat_acc ++ child_flat, scope_acc ++ child_scopes}
+
+        :nested ->
+          if child_flat == [] and child_scopes == [] do
+            {flat_acc, scope_acc}
+          else
+            path = String.trim_trailing(child_prefix, ".")
+            {flat_acc, scope_acc ++ [%{path: path, fields: child_flat, scopes: child_scopes}]}
+          end
+      end
+    end)
+  end
+
+  defp multi_match_body(text, fields),
+    do: %{"query" => text, "fields" => fields, "type" => "best_fields"}
+
+  defp flat_multi_match(_text, []), do: []
+  defp flat_multi_match(text, fields), do: [%{"multi_match" => multi_match_body(text, fields)}]
+
+  # Builds a `nested` search query for one scope. Nested-inside-nested embeds
+  # recurse: the inner query becomes a bool `should` combining the scope's own
+  # multi_match with the sub-scopes' nested queries.
+  defp nested_search_query(text, %{path: path, fields: fields, scopes: scopes}) do
+    inner_clauses =
+      flat_multi_match(text, fields) ++ Enum.map(scopes, &nested_search_query(text, &1))
+
+    inner =
+      case inner_clauses do
+        [single] -> single
+        many -> %{"bool" => %{"should" => many, "minimum_should_match" => 1}}
+      end
+
+    %{"nested" => %{"path" => path, "query" => inner}}
   end
 
   # -- filters ----------------------------------------------------------------
@@ -156,10 +243,11 @@ defmodule Orkestra.ES.PagedQuery do
   defp build_filters(schema, opts) do
     fields = schema.__es_schema__(:fields)
     facets_field = schema.__es_schema__(:facets_field)
+    embeds = schema.__es_schema__(:embeds)
     filters = opts |> Keyword.get(:filters, []) |> to_pairs()
 
     Enum.reduce_while(filters, {:ok, []}, fn {key, spec}, {:ok, acc} ->
-      case resolve_field(fields, facets_field, key) do
+      case resolve_field(fields, facets_field, embeds, key) do
         :error ->
           {:halt, {:error, {:unknown_filter_field, key}}}
 
@@ -168,28 +256,40 @@ defmodule Orkestra.ES.PagedQuery do
 
         {:field, meta} ->
           {:cont, {:ok, acc ++ [field_clause(meta, spec)]}}
+
+        {:embed, embed} ->
+          case embed_clauses_for(embed, "", to_pairs(spec)) do
+            {:ok, clauses} -> {:cont, {:ok, acc ++ clauses}}
+            {:error, _} = err -> {:halt, err}
+          end
       end
     end)
   end
 
-  defp resolve_field(fields, facets_field, key) do
+  defp resolve_field(fields, facets_field, embeds, key) do
     key_str = to_string(key)
 
     cond do
       not is_nil(facets_field) and key_str == Atom.to_string(facets_field) ->
         {:facets, facets_field}
 
+      embed = Enum.find(embeds, fn %{name: n} -> Atom.to_string(n) == key_str end) ->
+        {:embed, embed}
+
+      meta = Enum.find(fields, fn %{name: n} -> Atom.to_string(n) == key_str end) ->
+        {:field, meta}
+
       true ->
-        case Enum.find(fields, fn %{name: n} -> Atom.to_string(n) == key_str end) do
-          nil -> :error
-          meta -> {:field, meta}
-        end
+        :error
     end
   end
 
-  defp field_clause(%{type: type, name: name}, spec) do
-    field = Atom.to_string(name)
+  defp field_clause(%{type: type, name: name}, spec),
+    do: clause_for(Atom.to_string(name), type, spec)
 
+  # Derives the clause triple for a (possibly dotted) field path from its
+  # declared type — the shared core of top-level and embedded sub-filters.
+  defp clause_for(field, type, spec) do
     cond do
       base_type(type) == :text -> {:must, :match, %{field => spec}}
       term_type?(base_type(type)) -> term_clause(field, spec)
@@ -197,6 +297,71 @@ defmodule Orkestra.ES.PagedQuery do
       true -> {:filter, :term, %{field => spec}}
     end
   end
+
+  # -- embedded filters -------------------------------------------------------
+
+  # Compiles the sub-filters of one embed reached at dotted `prefix`.
+  #
+  #   * `mode: :object` — every sub-filter becomes an independent clause on the
+  #     dotted path, in its usual context (cross-entry false positives are
+  #     possible on `embeds_many`, see the module doc).
+  #   * `mode: :nested` — all sub-filters are combined into ONE `nested` query
+  #     with an inner bool, so they must hold on the same entry.
+  defp embed_clauses_for(%{mode: :object, name: name, schema: schema}, prefix, pairs) do
+    embed_clauses(schema, prefix <> Atom.to_string(name) <> ".", pairs)
+  end
+
+  defp embed_clauses_for(%{mode: :nested, name: name, schema: schema}, prefix, pairs) do
+    path = prefix <> Atom.to_string(name)
+
+    case embed_clauses(schema, path <> ".", pairs) do
+      {:ok, triples} -> {:ok, [{:filter, :nested, nested_filter_body(path, triples)}]}
+      {:error, _} = err -> err
+    end
+  end
+
+  # Resolves each sub-filter pair against the embedded schema: a field becomes
+  # a typed clause on the dotted path; a deeper embed recurses. An unknown key
+  # fails with the full dotted path (e.g. `"items.sku_typo"`).
+  defp embed_clauses(schema, prefix, pairs) do
+    fields = schema.__es_schema__(:fields)
+    embeds = schema.__es_schema__(:embeds)
+
+    Enum.reduce_while(pairs, {:ok, []}, fn {key, spec}, {:ok, acc} ->
+      key_str = to_string(key)
+
+      cond do
+        meta = Enum.find(fields, fn %{name: n} -> Atom.to_string(n) == key_str end) ->
+          {:cont, {:ok, acc ++ [clause_for(prefix <> key_str, meta.type, spec)]}}
+
+        embed = Enum.find(embeds, fn %{name: n} -> Atom.to_string(n) == key_str end) ->
+          case embed_clauses_for(embed, prefix, to_pairs(spec)) do
+            {:ok, clauses} -> {:cont, {:ok, acc ++ clauses}}
+            {:error, _} = err -> {:halt, err}
+          end
+
+        true ->
+          {:halt, {:error, {:unknown_filter_field, prefix <> key_str}}}
+      end
+    end)
+  end
+
+  # Wraps clause triples into the body of a correlated `nested` query: `match`
+  # clauses (text) go to the inner bool's `must`, everything else to `filter`.
+  defp nested_filter_body(path, triples) do
+    must = for {:must, type, value} <- triples, do: %{Atom.to_string(type) => value}
+    filter = for {:filter, type, value} <- triples, do: %{Atom.to_string(type) => value}
+
+    bool =
+      %{}
+      |> put_bool_clause("must", must)
+      |> put_bool_clause("filter", filter)
+
+    %{"path" => path, "query" => %{"bool" => bool}}
+  end
+
+  defp put_bool_clause(map, _key, []), do: map
+  defp put_bool_clause(map, key, clauses), do: Map.put(map, key, clauses)
 
   defp base_type({:array, inner}), do: inner
   defp base_type(type), do: type

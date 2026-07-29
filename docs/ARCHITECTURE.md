@@ -81,7 +81,7 @@ traces can be correlated with structured log lines.
 | `Orkestra.EventStore` | `lib/orkestra/event_store.ex` | Behaviour for stream-based event persistence with optimistic concurrency; runtime adapter resolved via `Application.get_env` |
 | `Orkestra.EventStore.Snapshot` | `lib/orkestra/event_store/snapshot.ex` | Stores aggregate state in a sibling stream (`snapshot-{stream_id}`) to reduce replay cost |
 | `Orkestra.Telemetry` | `lib/orkestra/telemetry.ex` | OpenTelemetry span helpers, structured Logger metadata injection, and AMQP trace-context propagation |
-| `Orkestra.ES.Schema` | `lib/orkestra/es/schema.ex` | Declarative schema DSL (Ecto-like) for Elasticsearch read models with fields, analysis, and facets |
+| `Orkestra.ES.Schema` | `lib/orkestra/es/schema.ex` | Declarative schema DSL (Ecto-like) for Elasticsearch read models with fields, analysis, facets, and embedded schemas |
 | `Orkestra.ES.Repository` | `lib/orkestra/es/repository.ex` | Generated CRUD and query API over an Elasticsearch index; full-text search, filters, facets, pagination |
 | `Orkestra.ES.Query` | `lib/orkestra/es/query.ex` | Pure DSL for composing Elasticsearch bool queries without HTTP calls |
 | `Orkestra.ES.Page` | `lib/orkestra/es/page.ex` | Paginated search result struct with entries, total count, facets, and pagination metadata |

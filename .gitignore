@@ -21,3 +21,6 @@ orkestra-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# GSD planning artifacts (local workflow state, not part of the library).
+/.planning/

@@ -1,0 +1,9 @@
+_build/
+deps/
+.git/
+.planning/
+orkestra_mcp/
+test/
+docs/
+*.md
+.tool-versions

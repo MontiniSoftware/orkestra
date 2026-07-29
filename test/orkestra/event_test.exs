@@ -4,21 +4,21 @@ defmodule Orkestra.EventTest do
   defmodule TaskCompleted do
     use Orkestra.Event
 
-    field :task_id, :string, required: true
-    field :status, :string, required: true
-    field :result, :map, default: %{}
-    field :cost_usd, :float, default: 0.0
+    field(:task_id, :string, required: true)
+    field(:status, :string, required: true)
+    field(:result, :map, default: %{})
+    field(:cost_usd, :float, default: 0.0)
   end
 
   defmodule MinimalEvent do
     use Orkestra.Event
 
-    field :message, :string, required: true
+    field(:message, :string, required: true)
   end
 
   defmodule DummyCmd do
     use Orkestra.Command
-    param :name, :string, required: true
+    param(:name, :string, required: true)
   end
 
   describe "new/2" do

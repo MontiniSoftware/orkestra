@@ -5,7 +5,7 @@ defmodule Orkestra.EventEnvelopeTest do
 
   defmodule DummyEvent do
     use Orkestra.Event
-    field :value, :string, required: true
+    field(:value, :string, required: true)
   end
 
   setup do

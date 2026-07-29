@@ -21,7 +21,8 @@ defmodule Orkestra.EventStore.Snapshot do
   end
 
   @doc "Loads the latest snapshot for a stream."
-  @spec load(String.t()) :: {:ok, %{state: term(), revision: non_neg_integer()}} | {:error, :no_snapshot}
+  @spec load(String.t()) ::
+          {:ok, %{state: term(), revision: non_neg_integer()}} | {:error, :no_snapshot}
   def load(stream_id) do
     snapshot_stream = snapshot_stream_id(stream_id)
     store = EventStore.impl()

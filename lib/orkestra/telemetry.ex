@@ -50,6 +50,45 @@ defmodule Orkestra.Telemetry do
     Map.merge(base, metadata_attrs(event.metadata))
   end
 
+  @doc "Creates span attributes for a projector event-processing span."
+  @spec projector_span_attrs(String.t(), map(), non_neg_integer()) :: map()
+  def projector_span_attrs(projector_name, event, position) do
+    %{
+      "orkestra.projector.name" => projector_name,
+      "orkestra.projector.position" => position,
+      "orkestra.event.type" => event.type,
+      "orkestra.event.id" => event[:id] || ""
+    }
+  end
+
+  @doc "Creates span attributes for an ES storage operation (single-doc or bulk)."
+  @spec es_span_attrs(String.t(), String.t(), atom(), non_neg_integer() | nil) :: map()
+  def es_span_attrs(projector_name, index, engine, doc_count \\ nil) do
+    base = %{
+      "orkestra.projector.name" => projector_name,
+      "es.index" => index,
+      "es.engine" => to_string(engine)
+    }
+
+    if doc_count, do: Map.put(base, "es.doc_count", doc_count), else: base
+  end
+
+  @doc """
+  Creates span attributes for an `Orkestra.ES.Repository` operation.
+
+  Used by the generated repository functions (`get/2`, `save/2`, `count/2`, …)
+  to describe the targeted index and resolved culture. Never include cluster
+  credentials or adapter options here (convention T-08-02).
+  """
+  @spec es_repo_span_attrs(module(), String.t(), atom() | nil) :: map()
+  def es_repo_span_attrs(schema, index, culture) do
+    %{
+      "orkestra.es.schema" => inspect(schema),
+      "es.index" => index,
+      "es.culture" => to_string(culture)
+    }
+  end
+
   @doc "Creates span attributes from Orkestra metadata."
   def metadata_attrs(nil), do: %{}
 

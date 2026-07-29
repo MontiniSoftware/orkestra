@@ -5,7 +5,7 @@ defmodule Orkestra.CommandEnvelopeTest do
 
   defmodule DummyCmd do
     use Orkestra.Command
-    param :name, :string, required: true
+    param(:name, :string, required: true)
   end
 
   setup do

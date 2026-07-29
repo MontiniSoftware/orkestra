@@ -4,16 +4,16 @@ defmodule Orkestra.CommandTest do
   defmodule StartTask do
     use Orkestra.Command
 
-    param :repo, :string, required: true
-    param :branch, :string, default: "main"
-    param :depth, :string, default: "standard"
-    param :tags, :list, default: []
+    param(:repo, :string, required: true)
+    param(:branch, :string, default: "main")
+    param(:depth, :string, default: "standard")
+    param(:tags, :list, default: [])
   end
 
   defmodule ValidatedCommand do
     use Orkestra.Command
 
-    param :count, :integer, required: true
+    param(:count, :integer, required: true)
 
     @impl true
     def validate(%{count: count}) when is_integer(count) and count > 0, do: :ok

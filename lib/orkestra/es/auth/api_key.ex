@@ -1,5 +1,5 @@
 if Code.ensure_loaded?(Snap.Cluster) do
-  defmodule Orkestra.Auth.ApiKey do
+  defmodule Orkestra.ES.Auth.ApiKey do
     @moduledoc """
     `Snap.Auth` implementation for Elasticsearch/OpenSearch API key authentication.
 
@@ -13,7 +13,7 @@ if Code.ensure_loaded?(Snap.Cluster) do
 
         config :my_app, MyApp.ESCluster,
           url: "https://my-cluster.es.io:9200",
-          auth: Orkestra.Auth.ApiKey,
+          auth: Orkestra.ES.Auth.ApiKey,
           api_key: Base.encode64("my-key-id:my-api-key-value")
 
     The `:api_key` config value **must be the already base64-encoded combined

@@ -1,10 +1,10 @@
 if Code.ensure_loaded?(Snap.Cluster) do
-  defmodule Orkestra.Auth.ApiKeyTest do
+  defmodule Orkestra.ES.Auth.ApiKeyTest do
     @moduledoc false
 
     use ExUnit.Case, async: true
 
-    alias Orkestra.Auth.ApiKey
+    alias Orkestra.ES.Auth.ApiKey
 
     describe "sign/5" do
       # Test 1: aggiunge l'header Authorization: ApiKey quando :api_key è presente
@@ -18,6 +18,7 @@ if Code.ensure_loaded?(Snap.Cluster) do
         assert method == "GET"
         assert url == "http://localhost:9200/"
         assert body == ""
+
         assert {"Authorization", "ApiKey " <> ^encoded_key} =
                  Enum.find(headers, fn {k, _} -> k == "Authorization" end)
       end
@@ -69,9 +70,9 @@ if Code.ensure_loaded?(Snap.Cluster) do
       end
     end
 
-    # Test 5 (contratto behaviour): Orkestra.Auth.ApiKey dichiara @behaviour Snap.Auth
+    # Test 5 (contratto behaviour): Orkestra.ES.Auth.ApiKey dichiara @behaviour Snap.Auth
     describe "behaviour contract" do
-      test "Orkestra.Auth.ApiKey declares @behaviour Snap.Auth" do
+      test "Orkestra.ES.Auth.ApiKey declares @behaviour Snap.Auth" do
         behaviours =
           ApiKey.__info__(:attributes)
           |> Keyword.get_values(:behaviour)

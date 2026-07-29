@@ -81,6 +81,14 @@ traces can be correlated with structured log lines.
 | `Orkestra.EventStore` | `lib/orkestra/event_store.ex` | Behaviour for stream-based event persistence with optimistic concurrency; runtime adapter resolved via `Application.get_env` |
 | `Orkestra.EventStore.Snapshot` | `lib/orkestra/event_store/snapshot.ex` | Stores aggregate state in a sibling stream (`snapshot-{stream_id}`) to reduce replay cost |
 | `Orkestra.Telemetry` | `lib/orkestra/telemetry.ex` | OpenTelemetry span helpers, structured Logger metadata injection, and AMQP trace-context propagation |
+| `Orkestra.ES.Schema` | `lib/orkestra/es/schema.ex` | Declarative schema DSL (Ecto-like) for Elasticsearch read models with fields, analysis, and facets |
+| `Orkestra.ES.Repository` | `lib/orkestra/es/repository.ex` | Generated CRUD and query API over an Elasticsearch index; full-text search, filters, facets, pagination |
+| `Orkestra.ES.Query` | `lib/orkestra/es/query.ex` | Pure DSL for composing Elasticsearch bool queries without HTTP calls |
+| `Orkestra.ES.Page` | `lib/orkestra/es/page.ex` | Paginated search result struct with entries, total count, facets, and pagination metadata |
+| `Orkestra.ES.Facet` | `lib/orkestra/es/facet.ex` | Canonical facet structs: `Attribute` (code/name) and `Value` (code/name/count) |
+| `Orkestra.ES.Index` | `lib/orkestra/es/index.ex` | Index lifecycle: alias + versioning, drift detection, setup/migrate/status operations |
+| `Orkestra.ES.Auth.ApiKey` | `lib/orkestra/es/auth/api_key.ex` | API key authentication for Elasticsearch/OpenSearch |
+| `Orkestra.Projection.Storage.Elasticsearch` | `lib/orkestra/projection/storage/elasticsearch.ex` | Projection adapter delegating to `Orkestra.ES` for read-model writes |
 
 ---
 
@@ -297,6 +305,20 @@ orkestra/
         rabbit_mq.ex            # AMQP distributed adapter
       metadata.ex               # Correlation/causation struct
       telemetry.ex              # OTel spans, Logger metadata, AMQP propagation
+      es/                       # Elasticsearch/OpenSearch standalone subsystem
+        schema.ex               # use-able macro: declarative read-model schemas
+        schema/
+          compiler.ex           # Schema validation and compilation
+          mapping.ex            # Elasticsearch mapping generation
+          casting.ex            # Document encoding/decoding
+        facet.ex                # Facet structs: Attribute, Value
+        page.ex                 # Paginated result struct
+        paged_query.ex          # Full-text/filter/facet/sort builder and response parser
+        query.ex                # Pure bool-query DSL
+        repository.ex           # use-able macro: generated CRUD/query API
+        index.ex                # Index lifecycle: setup, status, migrate, hotswap
+        auth/
+          api_key.ex            # API key authentication (Elasticsearch 8.x, OpenSearch 2.x+)
   test/
     ...
 
@@ -325,6 +347,20 @@ orkestra_mcp/                   # Standalone MCP server (separate Mix project)
         conventions.ex          # MCP prompt: Orkestra conventions and best practices
         new_bounded_context.ex  # MCP prompt: guided workflow for adding a bounded context
 ```
+
+---
+
+## Orkestra.ES — Standalone Elasticsearch layer
+
+`Orkestra.ES` is an independent subsystem for building Elasticsearch/OpenSearch read models. It combines a **declarative schema DSL** (similar to Ecto) with a generated repository API, providing:
+
+- **Schemas** — define fields, types, analyzers, and facets; generates mappings and casting functions
+- **Repositories** — auto-generated CRUD (get, save, delete), bulk operations, full-text search, filters, facets, and paginated queries with offset or cursor pagination
+- **Index lifecycle** — alias + versioned physical indexes, automatic drift detection, zero-downtime reindex via `Snap.Indexes.hotswap`
+- **Multi-culture** — per-culture analyzers, one alias per language, automatic index resolution
+- **Standalone or integrated** — can be used independently or as the backend for Orkestra projections via the `schema:` option
+
+See [`docs/ELASTICSEARCH.md`](ELASTICSEARCH.md) for the complete guide.
 
 ---
 

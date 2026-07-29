@@ -12,9 +12,11 @@ A complete example showcasing all Orkestra features: CQRS commands/events, aggre
 | **Command Handler** (auto-subscribe) | `lib/order_system/orders/handlers/place_order_handler.ex` |
 | **Event Handler** (multi-event) | `lib/order_system/orders/handlers/order_notifier.ex` |
 | **Postgres Projector** (Ecto.Multi) | `lib/order_system/orders/projectors/order_postgres_projector.ex` |
-| **ES Projector** (`project_es/2`) | `lib/order_system/orders/projectors/order_es_projector.ex` |
-| **ES Query DSL** (pipe-based) | `lib/order_system/orders/queries.ex` |
-| **ES Index Mapping** (`dynamic: strict`) | Inside the ES projector's `index_mapping/0` |
+| **ES Schema** (`Orkestra.ES.Schema`) | `lib/order_system/search/order.ex` |
+| **ES Repository** (`Orkestra.ES.Repository`) | `lib/order_system/search/orders.ex` |
+| **ES Projector** (`project_es/2`, schema-backed) | `lib/order_system/orders/projectors/order_es_projector.ex` |
+| **ES query helpers** (`get_paged`, facets) + DSL escape hatch | `lib/order_system/orders/queries.ex` |
+| **ES Index Mapping** (`dynamic: strict`) | Generated from `OrderSystem.Search.Order` |
 | **Supervision tree** | `lib/order_system/application.ex` |
 | **MCP config** (Claude Code integration) | `.mcp.json` |
 | **MCP demo** (scaffold via CLI) | `priv/mcp_demo.sh` |
@@ -146,24 +148,31 @@ Process.sleep(500)
 # --- Query PostgreSQL read model ---
 OrderSystem.Repo.all(OrderSystem.Projections.OrderReadModel)
 
-# --- Query Elasticsearch ---
-OrderSystem.Orders.Queries.list()
+# --- Query Elasticsearch via the generated repository ---
+# Returns decoded %OrderSystem.Search.Order{} structs and %Orkestra.ES.Page{}.
+OrderSystem.Search.Orders.get("ORD-100")
+OrderSystem.Search.Orders.get_paged(search: "erlang", facets: true)
+
+# --- Higher-level query helpers (built on the repository) ---
+OrderSystem.Orders.Queries.list(facets: true)
 OrderSystem.Orders.Queries.search_by_product("Erlang")
 OrderSystem.Orders.Queries.expensive_orders(15.0)
-OrderSystem.Orders.Queries.count_by_status()
+OrderSystem.Orders.Queries.by_status("placed")
 OrderSystem.Orders.Queries.get("ORD-100")
 
-# --- ES Query DSL directly ---
-alias Orkestra.Projection.ES.Query
+# --- Escape hatch: the ES Query DSL directly ---
+alias Orkestra.ES.Query
 
-query = Query.new()
+OrderSystem.Orders.Queries.raw_search(fn q ->
+  q
   |> Query.must(match: %{"product_name" => "elixir"})
   |> Query.filter(range: %{"total" => %{"gte" => 50}})
-  |> Query.aggs("avg_total", avg: %{"field" => "total"})
-  |> Query.size(10)
-  |> Query.build()
+end)
 
-Snap.Search.search(OrderSystem.ESCluster, "orders", query)
+# --- ES index lifecycle (alias + versioning) ---
+# mix orkestra.es.setup    OrderSystem.Search.Order
+# mix orkestra.es.status   OrderSystem.Search.Order
+# mix orkestra.es.migrate  OrderSystem.Search.Order
 
 # --- Zero-downtime ES rebuild ---
 # mix orkestra.projection.es.rebuild OrderSystem.Orders.Projectors.OrderESProjector

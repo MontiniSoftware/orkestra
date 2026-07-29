@@ -69,6 +69,38 @@ defmodule Orkestra.Projector do
   `:init_adapter` message) to detect the engine and create the index before
   processing any events.
 
+  ## Elasticsearch projector with a schema
+
+  Instead of a raw `index:` name plus a hand-written `index_mapping/0`, an ES
+  projector may declare an `Orkestra.ES.Schema` module. The projector then
+  writes to the schema's **alias** (compatible with the alias + versioning index
+  lifecycle) and `index_mapping/0` is generated from the schema:
+
+      defmodule MyApp.OrderESProjector do
+        use Orkestra.Projector,
+          backend: :elasticsearch,
+          repo: MyApp.OrderProjection.Repo,
+          cluster: MyApp.ESCluster,
+          schema: MyApp.Search.Order,
+          culture: :it,
+          event_store: Orkestra.EventStore.InMemory
+
+        project_es MyApp.Events.OrderPlaced, fn event, _position ->
+          {:ok, %MyApp.Search.Order{order_id: event.data.order_id, status: "placed"}}
+        end
+      end
+
+  With `schema:`, a `project_es/2` handler may return either the legacy
+  `{:ok, doc, id}` tuple or `{:ok, %SchemaStruct{}}` — in the latter case the
+  document and `_id` are derived from the schema (`to_doc/1` and the primary-key
+  field). `:schema` and `:index` are mutually exclusive, and defining
+  `index_mapping/0` manually alongside `:schema` is a compile error (the schema
+  is the single source of truth).
+
+  `:culture` is only valid with `:schema`. For a multi-culture schema it
+  defaults to the schema's `default_culture`; for a mono-culture schema it must
+  be omitted.
+
   ## Options for `use Orkestra.Projector`
 
   - `:repo` (required) — the `Ecto.Repo` module for the projection checkpoint.
@@ -76,7 +108,14 @@ defmodule Orkestra.Projector do
     the read-model data.
   - `:backend` (optional) — `:postgres` (default) or `:elasticsearch`.
   - `:cluster` (required for ES) — the `Snap.Cluster` module.
-  - `:index` (required for ES) — the Elasticsearch index name string.
+  - `:index` (ES, legacy path) — the Elasticsearch index name string. Mutually
+    exclusive with `:schema`; requires a user-defined `index_mapping/0`.
+  - `:schema` (ES, schema path) — an `Orkestra.ES.Schema` module. The projector
+    writes to the schema alias and `index_mapping/0` is generated. Mutually
+    exclusive with `:index`.
+  - `:culture` (ES, schema path only) — the culture atom; defaults to the
+    schema's `default_culture` for multi-culture schemas, must be omitted for
+    mono-culture schemas.
   - `:event_store` (optional) — event store module; defaults to
     `Orkestra.EventStore`.
   - `:name` (optional) — override the projector name string; defaults to
@@ -253,6 +292,8 @@ defmodule Orkestra.Projector do
     backend = Keyword.get(opts, :backend, :postgres)
     es_cluster = Keyword.get(opts, :cluster, nil)
     es_index = Keyword.get(opts, :index, nil)
+    es_schema = Keyword.get(opts, :schema, nil)
+    es_culture = Keyword.get(opts, :culture, nil)
 
     lifecycle_cfg = %{
       max_retries: max_retries,
@@ -269,6 +310,8 @@ defmodule Orkestra.Projector do
       Module.put_attribute(__MODULE__, :_projector_backend, unquote(backend))
       Module.put_attribute(__MODULE__, :_projector_es_cluster, unquote(es_cluster))
       Module.put_attribute(__MODULE__, :_projector_es_index, unquote(es_index))
+      Module.put_attribute(__MODULE__, :_projector_es_schema, unquote(es_schema))
+      Module.put_attribute(__MODULE__, :_projector_es_culture, unquote(es_culture))
 
       Module.put_attribute(
         __MODULE__,
@@ -292,14 +335,72 @@ defmodule Orkestra.Projector do
     backend = Module.get_attribute(env.module, :_projector_backend) || :postgres
     es_cluster = Module.get_attribute(env.module, :_projector_es_cluster)
     es_index = Module.get_attribute(env.module, :_projector_es_index)
+    es_schema = Module.get_attribute(env.module, :_projector_es_schema)
+    es_culture = Module.get_attribute(env.module, :_projector_es_culture)
 
-    # Compile-time validation (T-08-05)
-    if backend == :elasticsearch and (is_nil(es_cluster) or is_nil(es_index)) do
+    # Compile-time validation (T-08-05).
+    #
+    # An ES projector must declare its target index in exactly one of two ways:
+    #
+    #   * the legacy path — `index:` (a raw index name) + a user-defined
+    #     `index_mapping/0`; or
+    #   * the schema path — `schema:` (an `Orkestra.ES.Schema` module) with the
+    #     effective index resolved to the schema's alias.
+    #
+    # `:cluster` is always required. `:schema` and `:index` are mutually
+    # exclusive, and `:culture` is only meaningful alongside `:schema`.
+    if backend == :elasticsearch do
+      cond do
+        is_nil(es_cluster) ->
+          raise CompileError,
+            file: env.file,
+            line: env.line,
+            description:
+              "use Orkestra.Projector with backend: :elasticsearch requires a :cluster option"
+
+        not is_nil(es_schema) and not is_nil(es_index) ->
+          raise CompileError,
+            file: env.file,
+            line: env.line,
+            description:
+              "use Orkestra.Projector with backend: :elasticsearch accepts :schema or :index, " <>
+                "but not both — they are mutually exclusive (a schema resolves its own alias)"
+
+        is_nil(es_schema) and is_nil(es_index) ->
+          raise CompileError,
+            file: env.file,
+            line: env.line,
+            description:
+              "use Orkestra.Projector with backend: :elasticsearch requires either a :schema " <>
+                "(an Orkestra.ES.Schema module) or an :index (a raw index name)"
+
+        true ->
+          :ok
+      end
+    end
+
+    if is_nil(es_schema) and not is_nil(es_culture) do
       raise CompileError,
         file: env.file,
         line: env.line,
         description:
-          "use Orkestra.Projector with backend: :elasticsearch requires both :cluster and :index options"
+          "use Orkestra.Projector: the :culture option is only valid together with :schema"
+    end
+
+    # Resolve the effective culture and index (alias) for the schema path.
+    # For the legacy path both stay nil / the raw index name.
+    resolved_culture = resolve_projector_culture!(env, es_schema, es_culture)
+    resolved_index = resolve_projector_index(es_schema, es_index, resolved_culture)
+
+    # With `schema:`, `index_mapping/0` is generated (one source of truth); a
+    # user-defined `index_mapping/0` would conflict with the schema mapping.
+    if not is_nil(es_schema) and Module.defines?(env.module, {:index_mapping, 0}) do
+      raise CompileError,
+        file: env.file,
+        line: env.line,
+        description:
+          "use Orkestra.Projector with schema: generates index_mapping/0 from the schema — " <>
+            "remove the manual index_mapping/0 definition (a single source of truth)"
     end
 
     if length(handlers) > 0 and length(es_handlers) > 0 do
@@ -405,28 +506,86 @@ defmodule Orkestra.Projector do
     # - Postgres backend with no ES handlers → always :skip → return :skip directly
     # - ES backend → may return {:ok, doc, id} | :skip | {:error, reason}
     es_handle_fn =
-      if backend == :elasticsearch do
-        quote do
-          @doc false
-          @spec __handle_es__(String.t(), map(), non_neg_integer()) ::
-                  {:ok, map(), String.t()} | :skip | {:error, term()}
-          def __handle_es__(projector_name, event, position) do
-            case __dispatch_es__(event.type, event, position) do
-              {:ok, doc, id} -> {:ok, doc, id}
-              :skip -> :skip
-              {:error, reason} -> {:error, reason}
+      cond do
+        backend == :elasticsearch and not is_nil(es_schema) ->
+          # Schema path: a handler may return either the legacy `{:ok, doc, id}`
+          # or `{:ok, %SchemaStruct{}}`, which is converted here via the schema's
+          # `to_doc/1` with the `_id` derived from the primary-key field.
+          quote do
+            @doc false
+            @spec __handle_es__(String.t(), map(), non_neg_integer()) ::
+                    {:ok, map(), String.t()} | :skip | {:error, term()}
+            def __handle_es__(projector_name, event, position) do
+              case __dispatch_es__(event.type, event, position) do
+                {:ok, %unquote(es_schema){} = struct} ->
+                  pk_field = unquote(es_schema).__es_schema__(:primary_key)
+
+                  case Map.fetch!(struct, pk_field) do
+                    nil -> {:error, {:missing_primary_key, pk_field}}
+                    id -> {:ok, unquote(es_schema).to_doc(struct), to_string(id)}
+                  end
+
+                {:ok, doc, id} ->
+                  {:ok, doc, id}
+
+                :skip ->
+                  :skip
+
+                {:error, reason} ->
+                  {:error, reason}
+
+                {:ok, other} ->
+                  {:error, {:unexpected_return, other}}
+              end
             end
           end
-        end
-      else
-        quote do
-          @doc false
-          @spec __handle_es__(String.t(), map(), non_neg_integer()) ::
-                  {:ok, map(), String.t()} | :skip | {:error, term()}
-          def __handle_es__(_projector_name, _event, _position) do
-            :skip
+
+        backend == :elasticsearch ->
+          quote do
+            @doc false
+            @spec __handle_es__(String.t(), map(), non_neg_integer()) ::
+                    {:ok, map(), String.t()} | :skip | {:error, term()}
+            def __handle_es__(projector_name, event, position) do
+              case __dispatch_es__(event.type, event, position) do
+                {:ok, doc, id} -> {:ok, doc, id}
+                :skip -> :skip
+                {:error, reason} -> {:error, reason}
+              end
+            end
           end
-        end
+
+        true ->
+          quote do
+            @doc false
+            @spec __handle_es__(String.t(), map(), non_neg_integer()) ::
+                    {:ok, map(), String.t()} | :skip | {:error, term()}
+            def __handle_es__(_projector_name, _event, _position) do
+              :skip
+            end
+          end
+      end
+
+    # On the schema path, `index_mapping/0` is generated to delegate to the
+    # schema's mapping for the resolved culture. On the legacy path the user
+    # supplies `index_mapping/0` themselves, so nothing is generated.
+    index_mapping_fn =
+      cond do
+        is_nil(es_schema) ->
+          nil
+
+        is_nil(resolved_culture) ->
+          quote do
+            @doc "Returns the ES index mapping, delegating to the declared schema."
+            @spec index_mapping() :: map()
+            def index_mapping, do: unquote(es_schema).mapping()
+          end
+
+        true ->
+          quote do
+            @doc "Returns the ES index mapping, delegating to the declared schema."
+            @spec index_mapping() :: map()
+            def index_mapping, do: unquote(es_schema).mapping(unquote(resolved_culture))
+          end
       end
 
     quote do
@@ -441,6 +600,7 @@ defmodule Orkestra.Projector do
       unquote(es_dispatch_fallback)
 
       unquote(es_handle_fn)
+      unquote(index_mapping_fn)
 
       @doc """
       Returns the compile-time projection configuration map.
@@ -450,9 +610,15 @@ defmodule Orkestra.Projector do
       (`:backend`, `:cluster`, `:index`, `:projector_module`) for the
       `mix orkestra.projection.es.rebuild` task (RBLD-02).
 
-      Postgres projectors return `backend: :postgres`, `cluster: nil`, `index: nil`.
-      Elasticsearch projectors return `backend: :elasticsearch`, `cluster: MyCluster`,
-      `index: "my_index"`.
+      Postgres projectors return `backend: :postgres`, `cluster: nil`, `index: nil`,
+      `schema: nil`, `culture: nil`.
+
+      Elasticsearch projectors return `backend: :elasticsearch`, `cluster: MyCluster`
+      and `index:` set to the effective index — the raw index name on the legacy
+      path, or the schema's resolved alias on the schema path. Schema-backed ES
+      projectors additionally carry `schema:` (the `Orkestra.ES.Schema` module)
+      and `culture:` (the resolved culture atom, or `nil` for a mono-culture
+      schema); legacy ES projectors return `schema: nil`, `culture: nil`.
       """
       @spec __projection_config__() :: %{
               repo: module(),
@@ -462,6 +628,8 @@ defmodule Orkestra.Projector do
               backend: :postgres | :elasticsearch,
               cluster: module() | nil,
               index: String.t() | nil,
+              schema: module() | nil,
+              culture: atom() | nil,
               projector_module: module()
             }
       def __projection_config__ do
@@ -472,7 +640,9 @@ defmodule Orkestra.Projector do
           migration_source: unquote(migration_source),
           backend: unquote(backend),
           cluster: unquote(es_cluster),
-          index: unquote(es_index),
+          index: unquote(resolved_index),
+          schema: unquote(es_schema),
+          culture: unquote(resolved_culture),
           projector_module: __MODULE__
         }
       end
@@ -500,7 +670,9 @@ defmodule Orkestra.Projector do
               lifecycle_config: unquote(Macro.escape(lifecycle)),
               adapter_opts: [
                 cluster: unquote(es_cluster),
-                index: unquote(es_index),
+                index: unquote(resolved_index),
+                schema: unquote(es_schema),
+                culture: unquote(resolved_culture),
                 handler: &__MODULE__.__handle_es__/3,
                 projector_module: __MODULE__
               ]
@@ -530,4 +702,52 @@ defmodule Orkestra.Projector do
       end
     end
   end
+
+  # Resolves the effective culture for a schema-backed ES projector at compile
+  # time. Returns `nil` for the legacy path (no schema) and for mono-culture
+  # schemas; the declared/default culture atom otherwise. Raises `CompileError`
+  # on an unknown or misused culture.
+  @doc false
+  def resolve_projector_culture!(_env, nil, _culture), do: nil
+
+  def resolve_projector_culture!(env, schema, culture) do
+    cultures = schema.__es_schema__(:cultures)
+    default_culture = schema.__es_schema__(:default_culture)
+
+    cond do
+      cultures == [] and not is_nil(culture) ->
+        raise CompileError,
+          file: env.file,
+          line: env.line,
+          description:
+            "use Orkestra.Projector: schema #{inspect(schema)} is mono-culture and does not " <>
+              "accept a :culture option (got #{inspect(culture)})"
+
+      cultures == [] ->
+        nil
+
+      is_nil(culture) ->
+        default_culture
+
+      culture in cultures ->
+        culture
+
+      true ->
+        raise CompileError,
+          file: env.file,
+          line: env.line,
+          description:
+            "use Orkestra.Projector: unknown culture #{inspect(culture)} for schema " <>
+              "#{inspect(schema)}, valid cultures: #{inspect(cultures)}"
+    end
+  end
+
+  # Resolves the effective index (alias) for an ES projector at compile time.
+  # The legacy path uses the raw `:index`; the schema path resolves the schema's
+  # alias for the resolved culture (or the mono/default-culture alias when the
+  # culture is `nil`).
+  @doc false
+  def resolve_projector_index(nil, index, _culture), do: index
+  def resolve_projector_index(schema, _index, nil), do: schema.alias_for()
+  def resolve_projector_index(schema, _index, culture), do: schema.alias_for(culture)
 end

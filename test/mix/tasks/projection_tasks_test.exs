@@ -61,6 +61,13 @@ if Code.ensure_loaded?(Ecto.Multi) do
 
     setup do
       :ok = Ecto.Adapters.SQL.Sandbox.checkout(ProjectionRepo)
+
+      # Shared mode so the process that `Ecto.Migrator.run` spawns to execute the
+      # migration (a Task) can reuse the test's single sandbox connection without
+      # an explicit allow/3. Combined with `migration_lock: false` in the repo's
+      # test config (see test_helper.exs), the migrator no longer needs a second
+      # connection for a table lock, so it runs cleanly inside the sandbox.
+      Ecto.Adapters.SQL.Sandbox.mode(ProjectionRepo, {:shared, self()})
       :ok
     end
 
@@ -75,13 +82,17 @@ if Code.ensure_loaded?(Ecto.Multi) do
         # Run migrate — creates the task_test_read_model table
         Mix.Tasks.Orkestra.Projection.Migrate.run([@test_projector_str])
 
-        # Verify by inserting a row into the created table (would raise if table missing)
-        {:ok, _} =
+        # Verify by inserting a row into the created table (would raise if table missing).
+        # Repo.insert_all/3 returns {rows_inserted, returned}, not an :ok tuple.
+        {1, _} =
           ProjectionRepo.insert_all(
             "task_test_read_model",
             [
+              # Schemaless insert_all does not cast, and the id column is
+              # :binary_id (uuid) — pass the raw 16-byte binary, not the string
+              # form (Ecto.UUID.generate/0), or Postgrex rejects it.
               %{
-                id: Ecto.UUID.generate(),
+                id: Ecto.UUID.bingenerate(),
                 projector_name: @test_projector_name,
                 value: "present"
               }
@@ -146,10 +157,19 @@ if Code.ensure_loaded?(Ecto.Multi) do
       end
 
       test "raises Mix.Error with clear message when projector not found under supervisor" do
-        # Run app.config only (not app.start) — no real supervisor running.
+        # Start an EMPTY projection supervisor (no children) under the default
+        # name the task looks up. The test projector is therefore not a child of
+        # it, so `Supervisor.terminate_child/2` returns {:error, :not_found} and
+        # the task raises the expected Mix.Error. (With no supervisor running at
+        # all, terminate_child would instead exit with :noproc — a different
+        # failure than the "not found under" contract this test verifies.)
+        start_supervised!(
+          {Orkestra.Projection.Supervisor, projectors: [], name: Orkestra.Projection.Supervisor}
+        )
+
         # Rebuild with --yes skips the confirmation prompt.
         # This should fail with a clear error because the test projector is not
-        # registered under any running Orkestra.Projection.Supervisor.
+        # registered under the running Orkestra.Projection.Supervisor.
         assert_raise Mix.Error, ~r/not found under/, fn ->
           Mix.Tasks.Orkestra.Projection.Rebuild.run([
             @test_projector_str,

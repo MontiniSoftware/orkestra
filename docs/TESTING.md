@@ -142,6 +142,82 @@ Phoenix.PubSub.subscribe(Orkestra.PubSub, "orkestra:deadletter")
 assert_receive {:dead_letter, entry}
 ```
 
+## Integration tests
+
+Orkestra includes integration tests (`test/integration/`) tagged with `:integration` that require a real Elasticsearch instance. These tests are excluded by default in `test_helper.exs` and run separately.
+
+### Setup
+
+An Elasticsearch instance is defined in `docker-compose.es.yml` at the repository root:
+
+```yaml
+version: '3.8'
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms2g -Xmx2g
+    ports:
+      - "9200:9200"
+    mem_limit: 4g
+```
+
+Start the service:
+
+```bash
+docker-compose -f docker-compose.es.yml up -d
+```
+
+### Running integration tests
+
+Integration tests are excluded by default. Run them explicitly:
+
+```bash
+# Run integration tests only
+mix test --only integration
+
+# Or use the alias (if configured)
+mix test.integration
+
+# Run integration tests + all other tests
+mix test --include integration
+```
+
+Set the `ELASTICSEARCH_URL` environment variable if your Elasticsearch instance is not at `http://localhost:9200`:
+
+```bash
+ELASTICSEARCH_URL=http://es-prod:9200 mix test --only integration
+```
+
+### Coverage
+
+Integration tests cover the full lifecycle:
+
+- **Index setup and status** — creating versioned indexes, drift detection, mapping hash validation
+- **CRUD round-trip** — save/get/delete with schema struct encoding and document decoding
+- **Date and embedded field casting** — custom date formats, type validation
+- **Paginated queries** — full-text search, typed filters, facets with aggregation counts, sorting, offset pagination, and search-after cursor pagination
+- **Multi-culture** — per-culture aliases, culture resolution, language-specific analyzer behavior (Italian stemming, English stemming)
+- **Facets with active filters** — conjunctive facet behavior (other facet counts reflect active filters)
+- **Index migration** — zero-downtime reindex via alias swap, old index cleanup
+- **Projection end-to-end** — InMemory event store → projector with schema → ES read model queries
+
+### Excluding integration tests (default)
+
+`test/test_helper.exs` excludes integration tests by default:
+
+```elixir
+ExUnit.start(exclude: [:integration])
+```
+
+To include them in a local run, override with `--include`:
+
+```bash
+mix test --include integration
+```
+
 ## MCP server test layout (`orkestra_mcp/test/`)
 
 | Test file | Module under test | `async` |

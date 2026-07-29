@@ -466,11 +466,11 @@ defmodule OrkestraMcp.Generator do
       Elasticsearch query helpers for `#{projector_module}`.
 
       Provides `search/3`, `list/3`, and `get_by_id/3` built on top of the
-      `Orkestra.Projection.ES.Query` DSL so callers do not need to write
+      `Orkestra.ES.Query` DSL so callers do not need to write
       boilerplate ES query code.
       \"\"\"
 
-      alias Orkestra.Projection.ES.Query
+      alias Orkestra.ES.Query
 
       @doc \"\"\"
       Executes a custom ES query built with the Query DSL.

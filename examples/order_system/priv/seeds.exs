@@ -47,17 +47,23 @@ Try these in IEx:
   # PostgreSQL read model
   OrderSystem.Repo.all(OrderSystem.Projections.OrderReadModel)
 
-  # Elasticsearch queries
-  OrderSystem.Orders.Queries.list()
+  # Elasticsearch read model via the generated repository (returns Order structs
+  # and %Orkestra.ES.Page{} results with facets)
+  OrderSystem.Search.Orders.get("ORD-001")
+  OrderSystem.Search.Orders.get_paged(search: "elixir", facets: true)
+
+  # Higher-level query helpers built on the repository
+  OrderSystem.Orders.Queries.list(facets: true)
   OrderSystem.Orders.Queries.search_by_product("Elixir")
   OrderSystem.Orders.Queries.expensive_orders(40.0)
-  OrderSystem.Orders.Queries.count_by_status()
+  OrderSystem.Orders.Queries.by_status("placed")
   OrderSystem.Orders.Queries.get("ORD-001")
 
-  # ES Query DSL directly
-  alias Orkestra.Projection.ES.Query
-  Query.new()
-  |> Query.must(match: %{"product_name" => "elixir"})
-  |> Query.filter(range: %{"total" => %{"gte" => 50}})
-  |> Query.build()
+  # Escape hatch: the ES Query DSL directly
+  alias Orkestra.ES.Query
+  OrderSystem.Orders.Queries.raw_search(fn q ->
+    q
+    |> Query.must(match: %{"product_name" => "elixir"})
+    |> Query.filter(range: %{"total" => %{"gte" => 50}})
+  end)
 """)

@@ -72,6 +72,8 @@ These are included only when you enable the corresponding adapter:
 | `amqp` | `~> 4.1` | `MessageBus.RabbitMQ` adapter |
 | `spear` | `~> 1.4` | `EventStore.EventStoreDB` adapter |
 | `opentelemetry_process_propagator` | `~> 0.3` | Trace context propagation across AMQP messages |
+| `snap` | `~> 0.2.0` | `Orkestra.ES` (standalone read models or projector backend) |
+| `finch` | `~> 0.21.0` | HTTP transport for `snap` (optional; needed in some environments) |
 
 Add the optional dep to your `mix.exs` `deps` list when you select the corresponding adapter.
 
@@ -236,6 +238,95 @@ Orkestra uses `opentelemetry_api` for distributed tracing. No configuration is r
 For structured logging, call `Orkestra.Telemetry.set_logger_metadata/1` at the start of handler execution to inject correlation ID, causation ID, actor info, and OTel trace/span IDs into Logger metadata.
 
 <!-- VERIFY: If a specific OpenTelemetry SDK (e.g., opentelemetry) or exporter is required/recommended for production use -->
+
+---
+
+## Orkestra.ES — Elasticsearch/OpenSearch
+
+Orkestra.ES builds read models on Elasticsearch/OpenSearch with declarative schemas, auto-generated repositories, and index lifecycle management. See [`docs/ELASTICSEARCH.md`](ELASTICSEARCH.md) for the complete guide.
+
+### Dependencies
+
+Add `snap` (the Elasticsearch HTTP client) and optionally `finch` (HTTP transport):
+
+```elixir
+def deps do
+  [
+    {:orkestra, "~> 0.1.0"},
+    {:snap, "~> 0.2.0"},           # Required for ES
+    {:finch, "~> 0.21.0"}          # Optional HTTP transport
+  ]
+end
+```
+
+### Schema Discovery and Lifecycle Tasks
+
+Configure schemas for index lifecycle management (setup, status, migrate):
+
+```elixir
+# config/config.exs
+config :orkestra, :es_schemas, [
+  {MyApp.Search.Product, MyApp.ESCluster},
+  {MyApp.Search.Article, MyApp.ESCluster}
+]
+```
+
+The three mix tasks discover schemas from this config:
+
+| Task | Purpose |
+|------|---------|
+| `mix orkestra.es.setup` | Create aliases and versioned indexes (idempotent) |
+| `mix orkestra.es.status` | Show alias existence and drift status (read-only) |
+| `mix orkestra.es.migrate` | Reconcile aliases with current schemas; zero-downtime reindex if drifted |
+
+Options for all three tasks:
+- `--schema MyApp.Search.Product` — only operate on a single schema
+- `--culture :it` — only operate on a single culture (multi-culture schemas only)
+- `--dry-run` — report actions without applying them (migrate only)
+
+### Cluster Configuration
+
+Define a `Snap.Cluster` module pointing to your Elasticsearch or OpenSearch instance:
+
+```elixir
+# lib/my_app/es_cluster.ex
+defmodule MyApp.ESCluster do
+  use Snap.Cluster,
+    url: System.fetch_env!("ELASTICSEARCH_URL"),    # e.g., "http://localhost:9200"
+    auth: Orkestra.ES.Auth.ApiKey,                  # or Snap.Auth.Basic
+    api_key: System.fetch_env!("ELASTICSEARCH_API_KEY")
+end
+
+# In your app supervision tree
+children = [
+  {MyApp.ESCluster, []}
+]
+```
+
+### Using Elasticsearch with Projections
+
+A projector can use `Orkestra.ES.Schema` as the read-model backend:
+
+```elixir
+defmodule MyApp.OrderESProjector do
+  use Orkestra.Projector,
+    backend: :elasticsearch,
+    repo: MyApp.OrderProjection.Repo,       # Checkpoint repo (Postgres)
+    cluster: MyApp.ESCluster,
+    schema: MyApp.Search.Order,             # ES read-model schema
+    culture: :it,                           # For multi-culture schemas
+    event_store: Orkestra.EventStore.InMemory
+
+  project_es MyApp.Events.OrderPlaced, fn event, _position ->
+    {:ok, %MyApp.Search.Order{
+      order_id: event.data.order_id,
+      status: "placed"
+    }}
+  end
+end
+```
+
+For details, see the "Using with projections" section in [`docs/ELASTICSEARCH.md`](ELASTICSEARCH.md).
 
 ---
 

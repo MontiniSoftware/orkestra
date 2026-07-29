@@ -1,9 +1,9 @@
-defmodule Orkestra.Projection.ES.QueryTest do
+defmodule Orkestra.ES.QueryTest do
   @moduledoc false
 
   use ExUnit.Case, async: true
 
-  alias Orkestra.Projection.ES.Query
+  alias Orkestra.ES.Query
 
   # -------------------------------------------------------------------------
   # new/0
@@ -269,7 +269,11 @@ defmodule Orkestra.Projection.ES.QueryTest do
                  "bool" => %{
                    "must" => [%{"match" => %{"status" => "placed"}}],
                    "filter" => [
-                     %{"range" => %{"created_at" => %{"gte" => "2024-01-01", "lte" => "2024-12-31"}}}
+                     %{
+                       "range" => %{
+                         "created_at" => %{"gte" => "2024-01-01", "lte" => "2024-12-31"}
+                       }
+                     }
                    ],
                    "must_not" => [%{"term" => %{"cancelled" => true}}]
                  }

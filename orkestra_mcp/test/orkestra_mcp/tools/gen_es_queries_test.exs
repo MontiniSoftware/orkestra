@@ -26,7 +26,7 @@ defmodule OrkestraMcp.Tools.GenEsQueriesTest do
       )
 
     assert result =~ "Created"
-    assert result =~ "Orkestra.Projection.ES.Query"
+    assert result =~ "Orkestra.ES.Query"
 
     queries_file = Path.join(tmp_dir, "lib/my_app/orders/es_queries.ex")
     assert File.exists?(queries_file)

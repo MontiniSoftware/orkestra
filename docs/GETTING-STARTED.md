@@ -275,4 +275,5 @@ The PubSub adapter defaults to `Orkestra.PubSub` as the PubSub process name if t
 
 - **`docs/ARCHITECTURE.md`** — How Orkestra's components fit together (command envelope lifecycle, aggregate root pipeline, message bus adapters).
 - **`docs/CONFIGURATION.md`** — Full configuration reference: all config keys, event store adapters, RabbitMQ adapter setup.
+- **`docs/ELASTICSEARCH.md`** — Build Elasticsearch/OpenSearch read models with declarative schemas, full-text search, facets, and zero-downtime migrations.
 - **`guide.md`** — Hands-on tutorial with more advanced patterns including aggregates with snapshots, wildcard event subscriptions, and metadata correlation chains.

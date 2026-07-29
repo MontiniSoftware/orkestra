@@ -89,7 +89,17 @@ if Code.ensure_loaded?(Snap.Cluster) and Code.ensure_loaded?(Ecto.Migrator) do
             Application.get_env(:orkestra, Orkestra.EventStore, [])
             |> Keyword.get(:adapter, Orkestra.EventStore.InMemory)
 
-          mapping = projector_module.index_mapping()
+          # Schema-backed projectors reindex against the schema's physical
+          # mapping (with the `_meta` drift hash injected) so that
+          # `Orkestra.ES.Index.status/3` still reports "in sync" after a rebuild;
+          # `index` is already the resolved alias. Legacy projectors keep using
+          # their hand-written `index_mapping/0`.
+          mapping =
+            if config.schema do
+              Orkestra.ES.Index.physical_mapping(config.schema, config.culture)
+            else
+              projector_module.index_mapping()
+            end
 
           # Step 1: Build the stream of Snap.Bulk.Action.Index structs.
           # Collect events eagerly because InMemory delivers synchronously and

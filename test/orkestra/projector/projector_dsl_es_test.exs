@@ -245,7 +245,9 @@ if Code.ensure_loaded?(Snap.Cluster) do
 
       test "Postgres projector returns projector_module: self in __projection_config__" do
         config = TestPostgresProjectorInES.__projection_config__()
-        assert config.projector_module == Orkestra.Projector.ProjectorDslEsTest.TestPostgresProjectorInES
+
+        assert config.projector_module ==
+                 Orkestra.Projector.ProjectorDslEsTest.TestPostgresProjectorInES
       end
     end
 

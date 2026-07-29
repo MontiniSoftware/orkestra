@@ -134,7 +134,16 @@ defmodule Orkestra.Projector.GenServer do
     # (e.g. Storage.Elasticsearch), send :init_adapter first so it can perform
     # engine detection and index creation before the checkpoint is loaded.
     # This preserves the Sandbox.allow/3 window for tests (RESEARCH Pitfall 1).
-    if function_exported?(Map.fetch!(config, :storage_adapter), :init, 1) do
+    #
+    # `Code.ensure_loaded?/1` is required: `function_exported?/3` returns false
+    # for a not-yet-loaded module (and does not force-load it). In dev/test,
+    # lazy module loading means the storage adapter may be unloaded at projector
+    # start, which would silently skip adapter init — leaving an ES read model
+    # to land in an auto-created plain index instead of the schema's alias +
+    # versioned index (a real bug surfaced by the integration suite).
+    storage_adapter = Map.fetch!(config, :storage_adapter)
+
+    if Code.ensure_loaded?(storage_adapter) and function_exported?(storage_adapter, :init, 1) do
       send(self(), :init_adapter)
     else
       send(self(), :load_checkpoint)
@@ -172,7 +181,8 @@ defmodule Orkestra.Projector.GenServer do
     # before calling :resume_writes, so the GenServer replays from 0.
     send(self(), :load_checkpoint)
 
-    {:reply, :ok, %{state | writes_paused: false, subscription_ref: nil, es_buffer: [], es_mode: :live}}
+    {:reply, :ok,
+     %{state | writes_paused: false, subscription_ref: nil, es_buffer: [], es_mode: :live}}
   end
 
   @doc false
@@ -534,7 +544,8 @@ defmodule Orkestra.Projector.GenServer do
         Logger.warning("ES bulk flush partial failure",
           projector: projector_name,
           error_count: length(errors),
-          errors: Enum.map(errors, fn e -> %{type: e.type, message: e.message, status: e.status} end),
+          errors:
+            Enum.map(errors, fn e -> %{type: e.type, message: e.message, status: e.status} end),
           orkestra: :projector
         )
 

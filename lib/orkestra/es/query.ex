@@ -1,4 +1,4 @@
-defmodule Orkestra.Projection.ES.Query do
+defmodule Orkestra.ES.Query do
   @moduledoc """
   Pipe-based DSL for composing Elasticsearch bool queries.
 
@@ -8,7 +8,7 @@ defmodule Orkestra.Projection.ES.Query do
 
   ## Usage
 
-      alias Orkestra.Projection.ES.Query
+      alias Orkestra.ES.Query
 
       query =
         Query.new()

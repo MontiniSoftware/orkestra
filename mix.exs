@@ -12,6 +12,7 @@ defmodule Orkestra.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      aliases: aliases(),
       package: package(),
       description: "CQRS/ES toolkit for Elixir with pluggable message bus and event store",
       source_url: @source_url,
@@ -23,6 +24,10 @@ defmodule Orkestra.MixProject do
     [
       extra_applications: [:logger]
     ]
+  end
+
+  def cli do
+    [preferred_envs: ["test.integration": :test]]
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
@@ -43,6 +48,17 @@ defmodule Orkestra.MixProject do
       {:finch, "~> 0.17", optional: true},
       {:mox, "~> 1.0", only: :test},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false}
+    ]
+  end
+
+  # `test.integration` runs the integration suite (tagged @moduletag :integration,
+  # excluded by default in test/test_helper.exs) against the services from
+  # docker-compose.es.yml. The ES URL is read from ELASTICSEARCH_URL (default
+  # http://localhost:9200); Postgres from DATABASE_URL. Bring the stack up with
+  # `docker compose -f docker-compose.es.yml up -d --wait` first.
+  defp aliases do
+    [
+      "test.integration": ["test --only integration"]
     ]
   end
 

@@ -41,6 +41,16 @@ if Code.ensure_loaded?(Snap.Cluster) do
     setup :verify_on_exit!
 
     setup do
+      # Global Mox mode: the ProjectorGenServer now ALWAYS runs the ES storage
+      # adapter's init/1 (engine detection GET / + index creation PUT /{index})
+      # on startup. init/1 fires from a deferred :init_adapter message that the
+      # GenServer processes as soon as its mailbox is scheduled — i.e. possibly
+      # BEFORE the test can call Mox.allow/3 after start_supervised!/1 returns.
+      # Global mode removes that race: any process may consume the mock's stubs
+      # and expectations set here in the test process. The module is async: false,
+      # which set_mox_global requires.
+      Mox.set_mox_global()
+
       :ok = Ecto.Adapters.SQL.Sandbox.checkout(ProjectionRepo)
       # Shared mode lets all processes started in this test (including the
       # ProjectorGenServer spawned by start_supervised!) access the sandbox
@@ -68,13 +78,23 @@ if Code.ensure_loaded?(Snap.Cluster) do
       on_exit(fn -> :telemetry.detach(handler_id) end)
 
       # Default Mox stub handles common Snap HTTP calls:
+      #   - GET /                   → engine detection (adapter init/1)
+      #   - PUT /{index}            → index creation via Snap.Indexes.create (init/1)
       #   - PUT /{index}/_doc/{id}  → single-doc index success
       #   - POST /_bulk             → bulk success
       # Individual tests override this with Mox.expect/4 for stricter assertions.
       Mox.stub(Snap.MockHTTPClient, :request, fn _cluster, method, url, _headers, _body, _opts ->
         cond do
+          method == :get and url == "http://localhost:9200" ->
+            {:ok,
+             %Snap.HTTPClient.Response{status: 200, body: ~s({"version":{"number":"8.15.0"}})}}
+
           method == :put and String.contains?(url, "_doc") ->
             {:ok, %Snap.HTTPClient.Response{status: 200, body: ~s({"result":"updated"})}}
+
+          method == :put ->
+            # Index creation (ensure_index → Snap.Indexes.create)
+            {:ok, %Snap.HTTPClient.Response{status: 200, body: ~s({"acknowledged":true})}}
 
           method == :post and String.contains?(url, "_bulk") ->
             {:ok,
@@ -91,12 +111,50 @@ if Code.ensure_loaded?(Snap.Cluster) do
       :ok
     end
 
+    # Minimal projector module exposing index_mapping/0 for the legacy
+    # provisioning path of ESAdapter.init/1 (Snap.Indexes.create).
+    defmodule TestESProjector do
+      @moduledoc false
+
+      def index_mapping do
+        %{"mappings" => %{"properties" => %{"data" => %{"type" => "keyword"}}}}
+      end
+    end
+
     # ---------------------------------------------------------------------------
     # Helpers
     # ---------------------------------------------------------------------------
 
     # Returns a unique projector name per test invocation.
     defp unique_projector_name, do: "test_projector_#{:erlang.unique_integer([:positive])}"
+
+    # Builds a 200 OK Snap response with a JSON-encoded body.
+    defp es_ok(body) do
+      {:ok, %Snap.HTTPClient.Response{status: 200, headers: [], body: Jason.encode!(body)}}
+    end
+
+    # Declares the two adapter-init HTTP expectations in call order:
+    #   1. GET /            — engine detection
+    #   2. PUT /{index}     — index creation (Snap.Indexes.create)
+    #
+    # Mox consumes expectations FIFO by name/arity (arguments are NOT matched to
+    # select an expectation), so these MUST be declared before any per-operation
+    # expectation and before the GenServer is started, since init/1 always runs
+    # its HTTP calls first.
+    defp expect_init_http do
+      Mox.expect(Snap.MockHTTPClient, :request, fn _cluster,
+                                                   :get,
+                                                   "http://localhost:9200",
+                                                   _headers,
+                                                   _body,
+                                                   _opts ->
+        es_ok(%{"version" => %{"number" => "8.15.0"}})
+      end)
+
+      Mox.expect(Snap.MockHTTPClient, :request, fn _cluster, :put, _url, _headers, _body, _opts ->
+        es_ok(%{"acknowledged" => true})
+      end)
+    end
 
     # Appends a single event to the InMemory event store.
     defp append_event(type, stream_revision) do
@@ -161,6 +219,7 @@ if Code.ensure_loaded?(Snap.Cluster) do
         adapter_opts: [
           cluster: ESCluster,
           index: Keyword.get(opts, :index, "test_index"),
+          projector_module: TestESProjector,
           handler: Keyword.get(opts, :handler, &default_es_handler/3),
           engine: :elasticsearch
         ]
@@ -186,13 +245,16 @@ if Code.ensure_loaded?(Snap.Cluster) do
     test "BULK-02 -- live mode: single doc write calls Snap.Document.index once per event" do
       projector_name = unique_projector_name()
 
+      # Adapter init HTTP calls (engine detection + index creation) come first.
+      expect_init_http()
+
       # Expect exactly one PUT _doc call (Snap.Document.index uses PUT /{index}/_doc/{id})
       Mox.expect(Snap.MockHTTPClient, :request, 1, fn _cluster,
-                                                       :put,
-                                                       url,
-                                                       _headers,
-                                                       _body,
-                                                       _opts ->
+                                                      :put,
+                                                      url,
+                                                      _headers,
+                                                      _body,
+                                                      _opts ->
         assert String.contains?(url, "_doc"),
                "Expected a PUT to /{index}/_doc/{id} but got: #{url}"
 
@@ -230,13 +292,16 @@ if Code.ensure_loaded?(Snap.Cluster) do
     test "BULK-01 -- catch-up mode: buffer accumulates and flushes at batch_size via Snap.Bulk.perform" do
       projector_name = unique_projector_name()
 
+      # Adapter init HTTP calls (engine detection + index creation) come first.
+      expect_init_http()
+
       # Expect exactly one POST _bulk call when batch_size (3) events are buffered
       Mox.expect(Snap.MockHTTPClient, :request, 1, fn _cluster,
-                                                       :post,
-                                                       url,
-                                                       _headers,
-                                                       _body,
-                                                       _opts ->
+                                                      :post,
+                                                      url,
+                                                      _headers,
+                                                      _body,
+                                                      _opts ->
         assert String.contains?(url, "_bulk"),
                "Expected a POST to /_bulk but got: #{url}"
 
@@ -278,14 +343,17 @@ if Code.ensure_loaded?(Snap.Cluster) do
     test "BULK-01 -- partial buffer does NOT flush when event count is below batch_size" do
       projector_name = unique_projector_name()
 
+      # Adapter init HTTP calls (engine detection + index creation) come first.
+      expect_init_http()
+
       # We expect exactly one bulk flush for the first batch of 3 events.
       # The next 2 events should NOT trigger a flush (buffer stays at 2 < batch_size 3).
       Mox.expect(Snap.MockHTTPClient, :request, 1, fn _cluster,
-                                                       :post,
-                                                       _url,
-                                                       _headers,
-                                                       _body,
-                                                       _opts ->
+                                                      :post,
+                                                      _url,
+                                                      _headers,
+                                                      _body,
+                                                      _opts ->
         {:ok,
          %Snap.HTTPClient.Response{
            status: 200,
@@ -318,6 +386,7 @@ if Code.ensure_loaded?(Snap.Cluster) do
       # Checkpoint must NOT have advanced past position 2
       checkpoint = get_checkpoint(projector_name)
       assert checkpoint != nil
+
       assert checkpoint.last_position == 2,
              "Expected checkpoint to stay at 2, but got: #{inspect(checkpoint.last_position)}"
 
@@ -335,13 +404,16 @@ if Code.ensure_loaded?(Snap.Cluster) do
       partial_failure_body =
         ~s({"errors":true,"items":[{"index":{"_id":"doc-0","status":200,"result":"created"}},{"index":{"_id":"doc-1","error":{"type":"mapper_parsing_exception","reason":"failed to parse field"},"status":400}}]})
 
+      # Adapter init HTTP calls (engine detection + index creation) come first.
+      expect_init_http()
+
       # Expect exactly one POST _bulk call that returns a partial failure
       Mox.expect(Snap.MockHTTPClient, :request, 1, fn _cluster,
-                                                       :post,
-                                                       url,
-                                                       _headers,
-                                                       _body,
-                                                       _opts ->
+                                                      :post,
+                                                      url,
+                                                      _headers,
+                                                      _body,
+                                                      _opts ->
         assert String.contains?(url, "_bulk")
         {:ok, %Snap.HTTPClient.Response{status: 200, body: partial_failure_body}}
       end)
@@ -392,13 +464,21 @@ if Code.ensure_loaded?(Snap.Cluster) do
     test "OBSV-02 -- es_bulk_flush telemetry fires with batch_size and duration_ms" do
       projector_name = unique_projector_name()
 
-      # Stub for the bulk success response (already set in setup, but be explicit)
-      Mox.stub(Snap.MockHTTPClient, :request, fn _cluster, :post, _url, _headers, _body, _opts ->
-        {:ok,
-         %Snap.HTTPClient.Response{
-           status: 200,
-           body: ~s({"errors":false,"items":[]})
-         }}
+      # Stub covering adapter init (GET / + PUT /{index}) and the bulk flush.
+      Mox.stub(Snap.MockHTTPClient, :request, fn _cluster, method, url, _headers, _body, _opts ->
+        cond do
+          method == :get and url == "http://localhost:9200" ->
+            es_ok(%{"version" => %{"number" => "8.15.0"}})
+
+          method == :put ->
+            es_ok(%{"acknowledged" => true})
+
+          method == :post and String.contains?(url, "_bulk") ->
+            es_ok(%{"errors" => false, "items" => []})
+
+          true ->
+            {:error, %Snap.HTTPClient.Error{reason: :unexpected_call, origin: nil}}
+        end
       end)
 
       pid =

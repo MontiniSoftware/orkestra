@@ -85,8 +85,11 @@ if Code.ensure_loaded?(Ecto.Multi) do
     describe "reset/2 contract" do
       test "returns :ok (unit test — schema module not required for return value)" do
         # We can't call reset/2 without a real DB here; covered in postgres_test.exs
-        # This test checks the callback is exported with the right arity
-        assert function_exported?(Postgres, :reset, 2)
+        # This test checks the callback is exported with the right arity.
+        # `Code.ensure_loaded?/1` guards against `function_exported?/3` returning
+        # false for a not-yet-loaded module in this async test (the module may
+        # not have been loaded by another test yet).
+        assert Code.ensure_loaded?(Postgres) and function_exported?(Postgres, :reset, 2)
       end
     end
   end

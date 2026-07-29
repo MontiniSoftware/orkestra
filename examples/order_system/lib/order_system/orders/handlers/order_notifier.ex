@@ -16,7 +16,8 @@ defmodule OrderSystem.Orders.Handlers.OrderNotifier do
   def handle_event(%{type: type, data: data}, _metadata) do
     case type do
       "OrderSystem.Orders.Events.OrderPlaced" ->
-        Logger.info("Order #{data.order_id} placed: #{data.product_name} x#{data.quantity} = $#{data.total}",
+        Logger.info(
+          "Order #{data.order_id} placed: #{data.product_name} x#{data.quantity} = $#{data.total}",
           orkestra: :order_notifier
         )
 

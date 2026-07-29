@@ -43,7 +43,10 @@ if Code.ensure_loaded?(Ecto.Multi) do
         # The Ecto.Migrator always reads migration_source from repo.config(), so we
         # temporarily patch Application env to override it.
         base_config = Application.get_env(:orkestra, ProjectionRepo, [])
-        patched_config = Keyword.put(base_config, :migration_source, "test_read_model_schema_migrations")
+
+        patched_config =
+          Keyword.put(base_config, :migration_source, "test_read_model_schema_migrations")
+
         Application.put_env(:orkestra, ProjectionRepo, patched_config)
 
         Ecto.Migrator.run(

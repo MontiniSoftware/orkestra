@@ -261,15 +261,13 @@ if Code.ensure_loaded?(Snap.Cluster) and Code.ensure_loaded?(Ecto.Migrator) do
                 {:ok, %Snap.HTTPClient.Response{status: 200, body: ~s({"_shards":{"total":1}})}}
 
               method == :post and String.contains?(url, "_aliases") ->
-                {:ok,
-                 %Snap.HTTPClient.Response{status: 200, body: ~s({"acknowledged":true})}}
+                {:ok, %Snap.HTTPClient.Response{status: 200, body: ~s({"acknowledged":true})}}
 
               method == :delete and String.contains?(url, "rebuild_test_orders") ->
                 {:ok, %Snap.HTTPClient.Response{status: 200, body: ~s({"acknowledged":true})}}
 
               method == :put and String.contains?(url, "_doc") ->
-                {:ok,
-                 %Snap.HTTPClient.Response{status: 200, body: ~s({"result":"updated"})}}
+                {:ok, %Snap.HTTPClient.Response{status: 200, body: ~s({"result":"updated"})}}
 
               true ->
                 {:error, %Snap.HTTPClient.Error{reason: :unexpected_call, origin: nil}}

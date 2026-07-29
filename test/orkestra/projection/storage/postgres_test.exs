@@ -26,7 +26,10 @@ if Code.ensure_loaded?(Ecto.Multi) do
       # Orkestra.Projection.Migration (both use version 1).
       Ecto.Adapters.SQL.Sandbox.unboxed_run(ProjectionRepo, fn ->
         base_config = Application.get_env(:orkestra, ProjectionRepo, [])
-        patched_config = Keyword.put(base_config, :migration_source, "test_read_model_schema_migrations")
+
+        patched_config =
+          Keyword.put(base_config, :migration_source, "test_read_model_schema_migrations")
+
         Application.put_env(:orkestra, ProjectionRepo, patched_config)
 
         Ecto.Migrator.run(

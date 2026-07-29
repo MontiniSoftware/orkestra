@@ -1,17 +1,74 @@
 defmodule OrderSystem.Orders.Queries do
   @moduledoc """
-  ES query helpers for the Orders projection.
+  Query helpers for the Orders Elasticsearch read model.
 
-  Uses `Orkestra.Projection.ES.Query` pipe-based DSL to compose
-  Elasticsearch queries and execute them via Snap.
+  These delegate to the generated `OrderSystem.Search.Orders` repository
+  (`get/2`, `get_paged/1`, …), which returns decoded `OrderSystem.Search.Order`
+  structs and `Orkestra.ES.Page` results. `raw_search/2` is kept as an escape
+  hatch showing the lower-level `Orkestra.ES.Query` DSL.
   """
-  alias Orkestra.Projection.ES.Query
+  alias OrderSystem.Search.Orders
+  alias Orkestra.ES.Query
 
   @cluster OrderSystem.ESCluster
   @index "orders"
 
-  @doc "Search orders by arbitrary query built with the ES Query DSL."
-  def search(build_fn, opts \\ []) do
+  @doc """
+  Lists orders, newest first, with offset pagination and optional facets.
+
+  Returns `{:ok, %Orkestra.ES.Page{}}` whose `entries` are `Order` structs.
+  """
+  def list(opts \\ []) do
+    Orders.get_paged(
+      sort: [placed_at: :desc],
+      facets: Keyword.get(opts, :facets, false),
+      page: Keyword.get(opts, :page, 1),
+      page_size: Keyword.get(opts, :page_size, 20)
+    )
+  end
+
+  @doc "Full-text search on the product name, with facets enabled."
+  def search_by_product(product_name, opts \\ []) do
+    Orders.get_paged(
+      search: product_name,
+      facets: true,
+      page: Keyword.get(opts, :page, 1),
+      page_size: Keyword.get(opts, :page_size, 20)
+    )
+  end
+
+  @doc "Filters orders by status (`\"placed\"`, `\"cancelled\"`)."
+  def by_status(status, opts \\ []) do
+    Orders.get_paged(
+      filters: [status: status],
+      page: Keyword.get(opts, :page, 1),
+      page_size: Keyword.get(opts, :page_size, 20)
+    )
+  end
+
+  @doc "Finds orders above a total threshold, most expensive first."
+  def expensive_orders(min_total, opts \\ []) do
+    Orders.get_paged(
+      filters: [total: {:gte, min_total}],
+      sort: [total: :desc],
+      page: Keyword.get(opts, :page, 1),
+      page_size: Keyword.get(opts, :page_size, 20)
+    )
+  end
+
+  @doc "Fetches a single order by id — `{:ok, %Order{}}` | `{:error, :not_found}`."
+  def get(order_id), do: Orders.get(order_id)
+
+  @doc "Total number of indexed orders."
+  def count, do: Orders.count()
+
+  @doc """
+  Escape hatch: run a raw query built with the `Orkestra.ES.Query` DSL.
+
+  Demonstrates dropping down to the low-level query builder when the repository
+  helpers are not expressive enough (here: a terms aggregation on `status`).
+  """
+  def raw_search(build_fn, opts \\ []) do
     query =
       Query.new()
       |> build_fn.()
@@ -22,42 +79,7 @@ defmodule OrderSystem.Orders.Queries do
     Snap.Search.search(@cluster, @index, query)
   end
 
-  @doc "List all orders with pagination."
-  def list(opts \\ []) do
-    query =
-      Query.new()
-      |> Query.size(Keyword.get(opts, :size, 20))
-      |> Query.from(Keyword.get(opts, :from, 0))
-      |> Query.sort(%{"placed_at" => %{"order" => "desc"}})
-      |> Query.build()
-
-    Snap.Search.search(@cluster, @index, query)
-  end
-
-  @doc "Search orders by product name (full-text)."
-  def search_by_product(product_name, opts \\ []) do
-    search(fn query ->
-      Query.must(query, match: %{"product_name" => product_name})
-    end, opts)
-  end
-
-  @doc "Find orders by status (placed, cancelled)."
-  def by_status(status, opts \\ []) do
-    search(fn query ->
-      Query.filter(query, term: %{"status" => status})
-    end, opts)
-  end
-
-  @doc "Find orders above a total threshold."
-  def expensive_orders(min_total, opts \\ []) do
-    search(fn query ->
-      query
-      |> Query.filter(range: %{"total" => %{"gte" => min_total}})
-      |> Query.sort(%{"total" => %{"order" => "desc"}})
-    end, opts)
-  end
-
-  @doc "Get order count by status (aggregation)."
+  @doc "Order count grouped by status (raw aggregation via the Query DSL)."
   def count_by_status do
     query =
       Query.new()
@@ -66,10 +88,5 @@ defmodule OrderSystem.Orders.Queries do
       |> Query.build()
 
     Snap.Search.search(@cluster, @index, query)
-  end
-
-  @doc "Get a single order by ID."
-  def get(order_id) do
-    Snap.Document.get(@cluster, @index, order_id)
   end
 end

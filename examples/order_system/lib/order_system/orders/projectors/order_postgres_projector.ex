@@ -10,13 +10,13 @@ defmodule OrderSystem.Orders.Projectors.OrderPostgresProjector do
     repo: OrderSystem.Repo,
     event_store: Orkestra.EventStore.InMemory
 
-  project OrderSystem.Orders.Events.OrderPlaced, fn _event, multi ->
+  project(OrderSystem.Orders.Events.OrderPlaced, fn _event, multi ->
     # For Postgres projectors, we build Ecto.Multi operations
     # In a real app, you'd insert/update Ecto schemas here
     multi
-  end
+  end)
 
-  project OrderSystem.Orders.Events.OrderCancelled, fn _event, multi ->
+  project(OrderSystem.Orders.Events.OrderCancelled, fn _event, multi ->
     multi
-  end
+  end)
 end

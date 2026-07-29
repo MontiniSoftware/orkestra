@@ -22,6 +22,36 @@ if Code.ensure_loaded?(Snap.Cluster) do
       end
     end
 
+    # Mono-culture schema fixture for the schema-path init tests.
+    defmodule OrderSchema do
+      @moduledoc false
+      use Orkestra.ES.Schema, index: "schema_orders"
+
+      schema do
+        field(:order_id, :keyword, primary_key: true)
+        field(:status, :keyword)
+      end
+    end
+
+    defp es_ok(body) do
+      {:ok, %Snap.HTTPClient.Response{status: 200, headers: [], body: Jason.encode!(body)}}
+    end
+
+    defp es_not_found(index) do
+      body =
+        Jason.encode!(%{
+          "error" => %{
+            "type" => "index_not_found_exception",
+            "root_cause" => [
+              %{"type" => "index_not_found_exception", "reason" => "no such index [#{index}]"}
+            ]
+          },
+          "status" => 404
+        })
+
+      {:ok, %Snap.HTTPClient.Response{status: 404, headers: [], body: body}}
+    end
+
     # -------------------------------------------------------------------------
     # Test 1: Behaviour contract
     # -------------------------------------------------------------------------
@@ -327,6 +357,91 @@ if Code.ensure_loaded?(Snap.Cluster) do
                    index: "test_orders",
                    projector_module: TestProjectorForES
                  )
+      end
+    end
+
+    # -------------------------------------------------------------------------
+    # init/1 with schema: — delegates to Orkestra.ES.Index.setup/3
+    # -------------------------------------------------------------------------
+    describe "init/1 with schema:" do
+      test "provisions a versioned index + alias with the _meta hash (setup path)" do
+        test_pid = self()
+        expected_hash = OrderSchema.mapping_hash()
+
+        Mox.stub(Snap.MockHTTPClient, :request, fn _cluster, method, url, _headers, body, _opts ->
+          cond do
+            # engine detection GET /
+            method == :get and url == "http://localhost:9200" ->
+              es_ok(%{"version" => %{"number" => "8.15.0"}})
+
+            # alias existence probe → not found (so setup creates)
+            method == :get and String.contains?(url, "schema_orders/_mapping") ->
+              es_not_found("schema_orders")
+
+            # versioned physical index creation
+            method == :put and String.match?(url, ~r{/schema_orders-\d+$}) ->
+              send(test_pid, {:created, Jason.decode!(body)})
+              es_ok(%{"acknowledged" => true})
+
+            # list_starting_with for the alias swap
+            method == :get and String.contains?(url, "_cat/indices") ->
+              es_ok([])
+
+            # alias swap
+            method == :post and String.contains?(url, "_aliases") ->
+              es_ok(%{"acknowledged" => true})
+
+            true ->
+              {:error, %Snap.HTTPClient.Error{reason: :unexpected_call, origin: nil}}
+          end
+        end)
+
+        assert {:ok, state} =
+                 Elasticsearch.init(
+                   cluster: Orkestra.Test.ESCluster,
+                   index: "schema_orders",
+                   schema: OrderSchema,
+                   culture: nil
+                 )
+
+        # index in the returned state is the alias (load-bearing for the GenServer)
+        assert state.index == "schema_orders"
+        assert state.engine == :elasticsearch
+
+        # The created physical mapping carries the strict + _meta hash markers.
+        assert_receive {:created, created_mapping}
+        assert created_mapping["mappings"]["dynamic"] == "strict"
+        assert created_mapping["mappings"]["_meta"]["orkestra_schema_hash"] == expected_hash
+      end
+
+      test "is a no-op when the alias already exists" do
+        Mox.stub(Snap.MockHTTPClient, :request, fn _cluster,
+                                                   method,
+                                                   url,
+                                                   _headers,
+                                                   _body,
+                                                   _opts ->
+          cond do
+            method == :get and url == "http://localhost:9200" ->
+              es_ok(%{"version" => %{"number" => "8.15.0"}})
+
+            method == :get and String.contains?(url, "schema_orders/_mapping") ->
+              es_ok(%{"schema_orders-111" => %{"mappings" => %{}}})
+
+            true ->
+              {:error, %Snap.HTTPClient.Error{reason: :unexpected_call, origin: nil}}
+          end
+        end)
+
+        assert {:ok, state} =
+                 Elasticsearch.init(
+                   cluster: Orkestra.Test.ESCluster,
+                   index: "schema_orders",
+                   schema: OrderSchema,
+                   culture: nil
+                 )
+
+        assert state.index == "schema_orders"
       end
     end
 

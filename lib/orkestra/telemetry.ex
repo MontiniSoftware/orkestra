@@ -73,6 +73,22 @@ defmodule Orkestra.Telemetry do
     if doc_count, do: Map.put(base, "es.doc_count", doc_count), else: base
   end
 
+  @doc """
+  Creates span attributes for an `Orkestra.ES.Repository` operation.
+
+  Used by the generated repository functions (`get/2`, `save/2`, `count/2`, …)
+  to describe the targeted index and resolved culture. Never include cluster
+  credentials or adapter options here (convention T-08-02).
+  """
+  @spec es_repo_span_attrs(module(), String.t(), atom() | nil) :: map()
+  def es_repo_span_attrs(schema, index, culture) do
+    %{
+      "orkestra.es.schema" => inspect(schema),
+      "es.index" => index,
+      "es.culture" => to_string(culture)
+    }
+  end
+
   @doc "Creates span attributes from Orkestra metadata."
   def metadata_attrs(nil), do: %{}
 

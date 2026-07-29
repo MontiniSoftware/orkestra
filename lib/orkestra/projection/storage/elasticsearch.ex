@@ -79,26 +79,59 @@ if Code.ensure_loaded?(Snap.Cluster) do
     Detects the ES/OpenSearch engine, creates the projection index with strict
     mappings if needed, and returns an adapter state map.
 
+    Two provisioning paths are supported, selected by the presence of `:schema`:
+
+    - **Legacy path** — opts carry `:index` (the raw index name) and
+      `:projector_module` (which implements `index_mapping/0`). The index is
+      created via `Orkestra.ES.Index.ensure_index/3`.
+    - **Schema path** — opts carry `:schema` (an `Orkestra.ES.Schema` module),
+      `:index` (the resolved alias) and optional `:culture`. The alias +
+      versioned index (with the schema mapping and `_meta` hash) is provisioned
+      via `Orkestra.ES.Index.setup/3`; an existing alias is a no-op.
+
     Requires opts:
     - `:cluster` — the `Snap.Cluster` module
-    - `:index` — the index name string
-    - `:projector_module` — the projector module that implements `index_mapping/0`
+    - `:index` — the index name (legacy) or resolved alias (schema path)
+    - `:projector_module` — the projector module implementing `index_mapping/0`
+      (legacy path)
+    - `:schema` — an `Orkestra.ES.Schema` module (schema path)
+    - `:culture` — the culture atom or `nil` (schema path)
 
-    Returns `{:ok, %{cluster: cluster, index: index, engine: engine}}` or
-    `{:error, reason}` if index creation fails.
+    Returns `{:ok, %{cluster: cluster, index: index, engine: engine}}` (where
+    `index` is the alias on the schema path) or `{:error, reason}` if index
+    provisioning fails.
     """
     @impl true
     @spec init(keyword()) :: {:ok, map()} | {:error, term()}
     def init(opts) do
       cluster = Keyword.fetch!(opts, :cluster)
       index = Keyword.fetch!(opts, :index)
-      projector_module = Keyword.fetch!(opts, :projector_module)
 
       Tracer.with_span "orkestra.es.init", %{"es.index" => index} do
-        with {:ok, engine} <- detect_engine(cluster),
-             :ok <- ensure_index(cluster, index, projector_module) do
+        with {:ok, engine} <- Orkestra.ES.Index.detect_engine(cluster),
+             :ok <- provision_index(cluster, index, opts) do
           {:ok, %{cluster: cluster, index: index, engine: engine}}
         end
+      end
+    end
+
+    # Provisions the index for the two supported paths (schema vs. legacy).
+    # The schema path delegates to the alias + versioning lifecycle
+    # (`Orkestra.ES.Index.setup/3`); an already-existing alias is a no-op.
+    defp provision_index(cluster, _index, opts) do
+      case Keyword.get(opts, :schema) do
+        nil ->
+          index = Keyword.fetch!(opts, :index)
+          projector_module = Keyword.fetch!(opts, :projector_module)
+          Orkestra.ES.Index.ensure_index(cluster, index, projector_module.index_mapping())
+
+        schema ->
+          culture = Keyword.get(opts, :culture)
+
+          case Orkestra.ES.Index.setup(cluster, schema, culture) do
+            {:ok, _created_or_exists} -> :ok
+            {:error, reason} -> {:error, reason}
+          end
       end
     end
 
@@ -178,90 +211,6 @@ if Code.ensure_loaded?(Snap.Cluster) do
 
         {:error, reason} ->
           {:error, {:reset_failed, reason}}
-      end
-    end
-
-    # -------------------------------------------------------------------------
-    # Private helpers
-    # -------------------------------------------------------------------------
-
-    # Detects the ES/OpenSearch engine by calling GET / on the cluster.
-    # Snap.Request.request/7 validates paths and rejects "/" because the URI
-    # split produces an empty segment. We bypass path validation by calling
-    # auth.sign/5 and Snap.HTTPClient.request/6 directly — this keeps full
-    # authentication (API key or Basic Auth) while avoiding the path check.
-    # Defaults to :elasticsearch on any connection or auth failure (T-06-05).
-    defp detect_engine(cluster) do
-      config = cluster.config()
-      json_library = cluster.json_library()
-      base_url = Keyword.fetch!(config, :url)
-      auth = Keyword.get(config, :auth, Snap.Auth.Plain)
-
-      default_headers = [{"content-type", "application/json"}, {"accept", "application/json"}]
-
-      with {:ok, {method, signed_url, signed_headers, signed_body}} <-
-             auth.sign(config, :get, base_url, default_headers, nil),
-           {:ok, %Snap.HTTPClient.Response{status: 200, body: body}} <-
-             Snap.HTTPClient.request(cluster, method, signed_url, signed_headers, signed_body) do
-        case json_library.decode(body) do
-          {:ok, %{"version" => %{"distribution" => "opensearch"}}} ->
-            {:ok, :opensearch}
-
-          {:ok, %{"version" => _}} ->
-            {:ok, :elasticsearch}
-
-          _ ->
-            {:ok, :elasticsearch}
-        end
-      else
-        {:ok, _response} ->
-          {:ok, :elasticsearch}
-
-        {:error, reason} ->
-          Logger.warning(
-            "ES engine detection failed — defaulting to :elasticsearch",
-            reason: inspect(reason),
-            orkestra: :projector
-          )
-
-          {:ok, :elasticsearch}
-      end
-    end
-
-    # Creates the projection index with dynamic: strict injected into the
-    # mappings block (T-06-03 mitigation — prevents mapping explosion).
-    # Returns :ok if index already exists (idempotent on restart).
-    defp ensure_index(cluster, index_name, projector_module) do
-      user_mapping = projector_module.index_mapping()
-
-      # Injects dynamic: "strict" into the mappings block unconditionally,
-      # overriding any user-supplied value — prevents mapping explosion (T-06-03).
-      mapping_with_strict =
-        Map.update(user_mapping, "mappings", %{"dynamic" => "strict"}, fn m ->
-          Map.put(m, "dynamic", "strict")
-        end)
-
-      Tracer.with_span "orkestra.es.ensure_index", %{"es.index" => index_name} do
-        case Snap.Indexes.create(cluster, index_name, mapping_with_strict) do
-          {:ok, _} ->
-            :ok
-
-          {:error, %Snap.ResponseError{type: "resource_already_exists_exception"}} ->
-            # Idempotent on restart — index already exists is not an error
-            :ok
-
-          {:error, reason} ->
-            Tracer.set_status(:error, inspect(reason))
-
-            Logger.warning(
-              "ES index creation failed",
-              index: index_name,
-              reason: inspect(reason),
-              orkestra: :projector
-            )
-
-            {:error, {:index_creation_failed, reason}}
-        end
       end
     end
   end

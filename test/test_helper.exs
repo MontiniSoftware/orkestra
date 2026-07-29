@@ -19,7 +19,16 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL.Sandbox) do
       ),
     migration_source: "orkestra_test_projection_schema_migrations",
     pool: Ecto.Adapters.SQL.Sandbox,
-    pool_size: 5
+    pool_size: 5,
+    # Disable the migration lock for the test repo. The lock acquires a table
+    # lock on one connection and runs the migration on a second (in a spawned
+    # Task) — impossible under the sandbox, which multiplexes every process onto
+    # a single shared connection, and it deadlocks with a DBConnection timeout.
+    # The mix-task tests exercise `Ecto.Migrator.run` through the sandbox, so
+    # they need the lock off. The gen_server/integration setup_all blocks already
+    # pass `migration_lock: false` explicitly; this makes it the repo default so
+    # the mix tasks (which can't pass the option) also run cleanly.
+    migration_lock: false
   )
 
   case Orkestra.Test.ProjectionRepo.start_link() do
@@ -52,6 +61,16 @@ if Code.ensure_loaded?(Snap.Cluster) do
       IO.puts("Skipping Elasticsearch tests — ESCluster start failed: #{inspect(reason)}")
       ExUnit.configure(exclude: [:elasticsearch])
   end
+end
+
+# Integration suite (test/integration/, tagged :integration, excluded by
+# default). Start the real-HTTP Snap cluster here, from the long-lived test
+# runner process, so its Finch pool survives across every integration module
+# (starting it from a per-module setup_all would tie its lifetime to that
+# module). start_link only boots the Finch pool — it makes no ES request — so
+# this is safe on a default `mix test` run without Elasticsearch running.
+if Code.ensure_loaded?(Snap.Cluster) do
+  Orkestra.Test.ESIntegration.start_cluster()
 end
 
 ExUnit.start(exclude: [:postgres, :elasticsearch, :integration])

@@ -5,12 +5,10 @@ config :order_system, ecto_repos: [OrderSystem.Repo]
 
 # --- Message Bus ---
 # Orkestra's PubSub bus reads its Phoenix.PubSub name from this config
-config :orkestra, Orkestra.MessageBus.PubSub,
-  pubsub: OrderSystem.PubSub
+config :orkestra, Orkestra.MessageBus.PubSub, pubsub: OrderSystem.PubSub
 
 # Topic derivation: strip the app prefix from module names
-config :orkestra, Orkestra.MessageBus,
-  app_prefix: OrderSystem
+config :orkestra, Orkestra.MessageBus, app_prefix: OrderSystem
 
 # --- Event Store ---
 # Using InMemory for this example (replace with EventStoreDB in production)
@@ -29,6 +27,11 @@ config :order_system, OrderSystem.ESCluster,
   url: System.get_env("ELASTICSEARCH_URL", "http://localhost:9200"),
   username: System.get_env("ELASTICSEARCH_USERNAME", "elastic"),
   password: System.get_env("ELASTICSEARCH_PASSWORD", "changeme")
+
+# --- Elasticsearch Schemas ---
+# Registers ES schemas with their cluster so the `mix orkestra.es.*` lifecycle
+# tasks (setup/status/migrate) can discover and provision the read-model indexes.
+config :orkestra, :es_schemas, [{OrderSystem.Search.Order, OrderSystem.ESCluster}]
 
 # --- Logger ---
 config :logger, :console,

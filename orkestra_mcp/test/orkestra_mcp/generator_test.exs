@@ -225,7 +225,7 @@ defmodule OrkestraMcp.GeneratorTest do
 
       assert file_path == Naming.module_to_file_path("MyApp.Orders.ESQueries")
       assert file_path == "lib/my_app/orders/es_queries.ex"
-      assert source =~ "alias Orkestra.Projection.ES.Query"
+      assert source =~ "alias Orkestra.ES.Query"
       assert source =~ "def search(cluster"
       assert source =~ "def list(cluster"
       assert source =~ "def get_by_id(cluster"

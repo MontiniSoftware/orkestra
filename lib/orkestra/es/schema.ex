@@ -47,7 +47,13 @@ defmodule Orkestra.ES.Schema do
   ## Field types
 
   `:keyword`, `:text`, `:integer`, `:long`, `:float`, `:double`, `:boolean`,
-  `:date`, and `{:array, scalar}`.
+  `:date`, `:geo_point`, and `{:array, scalar}`.
+
+  A `:geo_point` maps to the Elasticsearch `geo_point` type. Its value is a
+  `%{lat: float, lon: float}` map (string keys are accepted on input and
+  normalized); `nil` is allowed. It supports geo-distance filtering in
+  `get_paged/1` but is not full-text searchable or sortable — `searchable:`,
+  `analyzer:`, `keyword:` and `sortable:` all raise at compile time.
 
   ### Field options
 

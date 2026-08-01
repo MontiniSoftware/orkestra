@@ -157,6 +157,7 @@ end
 | `:double` | `double` | Double-precision floating-point. |
 | `:boolean` | `boolean` | True/false. |
 | `:date` | `date` | ISO 8601 dates or custom format. |
+| `:geo_point` | `geo_point` | Lat/lon point. Value is `%{lat: float, lon: float}` (string keys accepted on input, normalized). Supports geo-distance filtering; not searchable or sortable. |
 | `{:array, :keyword}` | `keyword` (flattened) | Array of a scalar type; stored flattened by ES. |
 
 ### Field options
@@ -178,6 +179,7 @@ The schema macro validates at compile time:
 - Exactly one field has `primary_key: true`
 - All analyzers referenced by `:text` fields are defined in `settings` for every culture
 - No unknown field types
+- A `:geo_point` field does not carry `searchable:`, `analyzer:`, `keyword:`, or `sortable:` (each raises a clear geo-specific error)
 
 Errors are raised during compilation; fix the schema definition and recompile.
 
@@ -868,6 +870,7 @@ Type-aware filters derived from field types:
 | `:integer`, `:float`, `:date` | `{:range, 100, 200}` | `range` with both bounds |
 | `:integer`, `:float`, `:date` | `[{:gte, 100}, {:lt, 200}]` | merged `range` |
 | `:text` | `"value"` | `match` (contributes to score) |
+| `:geo_point` | `{:geo_distance, %{lat:, lon:}, "25km"}` | `geo_distance` filter (any other spec → `{:error, {:invalid_geo_filter, field}}`) |
 | facets slot | `[color: "red", brand: "dell"]` | nested filter on `attr_code`/`value_code` |
 
 ```elixir
@@ -885,6 +888,48 @@ get_paged(filters: [attributes: [color: "red", brand: "dell"]])
 # Text (full-text within a field, not via :search)
 get_paged(filters: [description: "sustainable"])
 ```
+
+##### Geo queries
+
+Declare a `:geo_point` field and filter by distance from a center point:
+
+```elixir
+# In the schema:
+field(:location, :geo_point)
+
+# Index a document (the value is a %{lat:, lon:} map; string keys work too):
+{:ok, _} = Places.save(%MyApp.Search.Place{
+  place_id: "milan",
+  location: %{lat: 45.4642, lon: 9.1900}
+})
+
+# Filter to documents within 25 km of a center point:
+{:ok, page} = Places.get_paged(
+  filters: [location: {:geo_distance, %{lat: 45.5, lon: 9.2}, "25km"}]
+)
+```
+
+The filter spec is `{:geo_distance, center, distance}`:
+
+- `center` — a `%{lat: float, lon: float}` map (atom or string keys).
+- `distance` — a verbatim Elasticsearch distance string (`"25km"`, `"500m"`,
+  `"3mi"`). It is passed straight through to ES, which validates the unit.
+
+It compiles to a `geo_distance` filter in the bool `filter` context:
+
+```elixir
+%{"geo_distance" => %{"distance" => "25km",
+                      "location" => %{"lat" => 45.5, "lon" => 9.2}}}
+```
+
+Any other filter spec on a `:geo_point` field returns
+`{:error, {:invalid_geo_filter, field}}`.
+
+**Limitations.** Geo-distance filtering is root-level only (a `:geo_point`
+inside an `embeds_one`/`embeds_many` maps and round-trips correctly, but is not
+filterable through the embed). A `:geo_point` is never sortable —
+`_geo_distance` sort is out of scope, so any `sort:` on a geo field returns
+`{:error, {:not_sortable, field}}`.
 
 #### Facets
 

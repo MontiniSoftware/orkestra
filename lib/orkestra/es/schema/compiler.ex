@@ -13,7 +13,13 @@ defmodule Orkestra.ES.Schema.Compiler do
 
   alias Orkestra.ES.Schema.Mapping
 
-  @scalar_types [:keyword, :text, :integer, :long, :float, :double, :boolean, :date]
+  @scalar_types [:keyword, :text, :integer, :long, :float, :double, :boolean, :date, :geo_point]
+
+  # Options that make no sense on a `:geo_point` field and are rejected at
+  # compile time. `searchable:`/`analyzer:`/`keyword:` are already text-only,
+  # but geo-specific messages make the mistake clearer. `sortable:` is rejected
+  # because geo sort is intentionally out of scope (see the module doc).
+  @geo_point_forbidden_opts [:searchable, :analyzer, :keyword, :sortable]
 
   @typedoc "Normalized per-field metadata: `%{name:, type:, opts:}`."
   @type field_meta :: %{name: atom(), type: term(), opts: keyword()}
@@ -194,6 +200,25 @@ defmodule Orkestra.ES.Schema.Compiler do
             "#{inspect(mod)}: field #{inspect(name)} is a `primary_key` and must be of type :keyword"
     end
 
+    validate_type_opts!(mod, name, type, opts)
+
+    :ok
+  end
+
+  # A `:geo_point` field only carries `default:` (and `primary_key:`, already
+  # rejected above by the keyword-type check). Every analysis/sort option is
+  # forbidden with a clear, geo-specific message.
+  defp validate_type_opts!(mod, name, :geo_point, opts) do
+    Enum.each(@geo_point_forbidden_opts, fn key ->
+      if Keyword.has_key?(opts, key) and opts[key] not in [nil, false] do
+        raise ArgumentError,
+              "#{inspect(mod)}: field #{inspect(name)} is a `:geo_point` and does not support " <>
+                "`#{key}:` (geo fields are not full-text searchable or sortable)"
+      end
+    end)
+  end
+
+  defp validate_type_opts!(mod, name, type, opts) do
     validate_text_only!(mod, name, type, opts, :analyzer)
     validate_text_only!(mod, name, type, opts, :searchable)
     validate_text_only!(mod, name, type, opts, :keyword)
@@ -202,8 +227,6 @@ defmodule Orkestra.ES.Schema.Compiler do
       raise ArgumentError,
             "#{inspect(mod)}: field #{inspect(name)} `analyzer:` must be an atom (a logical name)"
     end
-
-    :ok
   end
 
   # `analyzer:`/`searchable:`/`keyword:` only make sense on :text fields.

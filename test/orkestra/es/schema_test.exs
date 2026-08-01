@@ -67,6 +67,16 @@ defmodule Orkestra.ES.SchemaTest do
     end
   end
 
+  defmodule Geo do
+    use Orkestra.ES.Schema, index: "geo"
+
+    schema do
+      field(:id, :keyword, primary_key: true)
+      field(:name, :text)
+      field(:location, :geo_point)
+    end
+  end
+
   # -- struct + defaults ------------------------------------------------------
 
   describe "generated struct" do
@@ -400,6 +410,75 @@ defmodule Orkestra.ES.SchemaTest do
     end
   end
 
+  # -- geo_point --------------------------------------------------------------
+
+  describe "geo_point field" do
+    test "maps to the Elasticsearch geo_point type" do
+      props = Geo.mapping()["mappings"]["properties"]
+      assert props["location"] == %{"type" => "geo_point"}
+    end
+
+    test "introspection reports the :geo_point type" do
+      fields = Geo.__es_schema__(:fields)
+      location = Enum.find(fields, &(&1.name == :location))
+      assert location.type == :geo_point
+
+      # geo fields are neither searchable nor sortable
+      assert Geo.__es_schema__(:searchable_fields) == []
+      assert Geo.__es_schema__(:sortable_fields) == []
+    end
+
+    test "participates in the mapping hash like any other field" do
+      defmodule GeoHashA do
+        use Orkestra.ES.Schema, index: "gh"
+
+        schema do
+          field(:id, :keyword, primary_key: true)
+          field(:loc, :geo_point)
+        end
+      end
+
+      defmodule GeoHashB do
+        use Orkestra.ES.Schema, index: "gh"
+
+        schema do
+          field(:id, :keyword, primary_key: true)
+          field(:loc, :keyword)
+        end
+      end
+
+      assert GeoHashA.mapping_hash() != GeoHashB.mapping_hash()
+    end
+
+    test "round-trips an atom-keyed point" do
+      s = %Geo{id: "x", location: %{lat: 45.5, lon: 9.2}}
+      doc = Geo.to_doc(s)
+      assert doc["location"] == %{"lat" => 45.5, "lon" => 9.2}
+      assert Geo.from_hit(doc) == s
+    end
+
+    test "normalizes a string-keyed point on input to the atom-keyed map" do
+      s = %Geo{id: "x", location: %{"lat" => 45.5, "lon" => 9.2}}
+      doc = Geo.to_doc(s)
+      assert doc["location"] == %{"lat" => 45.5, "lon" => 9.2}
+      # from_hit always decodes to atom keys
+      assert Geo.from_hit(doc) == %Geo{id: "x", location: %{lat: 45.5, lon: 9.2}}
+    end
+
+    test "a nil geo_point round-trips as nil" do
+      s = %Geo{id: "x", location: nil}
+      doc = Geo.to_doc(s)
+      assert doc["location"] == nil
+      assert Geo.from_hit(doc) == s
+    end
+
+    test "a zero coordinate is preserved (not treated as missing)" do
+      s = %Geo{id: "x", location: %{lat: 0.0, lon: 0.0}}
+      assert Geo.to_doc(s)["location"] == %{"lat" => 0.0, "lon" => 0.0}
+      assert Geo.from_hit(Geo.to_doc(s)) == s
+    end
+  end
+
   # -- compile-time validation ------------------------------------------------
 
   describe "compile-time validation" do
@@ -475,7 +554,7 @@ defmodule Orkestra.ES.SchemaTest do
       assert_raise ArgumentError, ~r/unknown type/, fn ->
         compile_schema!("""
         field :id, :keyword, primary_key: true
-        field :a, :geo_point
+        field :a, :geo_shape
         """)
       end
     end
@@ -495,6 +574,48 @@ defmodule Orkestra.ES.SchemaTest do
         field :id, :keyword, primary_key: true
         field :a, :keyword, searchable: true
         """)
+      end
+    end
+
+    test "searchable on a geo_point field" do
+      assert_raise ArgumentError, ~r/`:geo_point` and does not support `searchable:`/, fn ->
+        compile_schema!("""
+        field :id, :keyword, primary_key: true
+        field :loc, :geo_point, searchable: true
+        """)
+      end
+    end
+
+    test "analyzer on a geo_point field" do
+      assert_raise ArgumentError, ~r/`:geo_point` and does not support `analyzer:`/, fn ->
+        compile_schema!("""
+        field :id, :keyword, primary_key: true
+        field :loc, :geo_point, analyzer: :x
+        """)
+      end
+    end
+
+    test "keyword on a geo_point field" do
+      assert_raise ArgumentError, ~r/`:geo_point` and does not support `keyword:`/, fn ->
+        compile_schema!("""
+        field :id, :keyword, primary_key: true
+        field :loc, :geo_point, keyword: true
+        """)
+      end
+    end
+
+    test "sortable on a geo_point field" do
+      assert_raise ArgumentError, ~r/`:geo_point` and does not support `sortable:`/, fn ->
+        compile_schema!("""
+        field :id, :keyword, primary_key: true
+        field :loc, :geo_point, sortable: true
+        """)
+      end
+    end
+
+    test "geo_point cannot be a primary key" do
+      assert_raise ArgumentError, ~r/must be of type :keyword/, fn ->
+        compile_schema!("field :loc, :geo_point, primary_key: true")
       end
     end
 

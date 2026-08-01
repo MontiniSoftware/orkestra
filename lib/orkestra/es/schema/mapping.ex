@@ -156,7 +156,7 @@ defmodule Orkestra.ES.Schema.Mapping do
   end
 
   defp scalar_property(type, _opts)
-       when type in [:keyword, :integer, :long, :float, :double, :boolean] do
+       when type in [:keyword, :integer, :long, :float, :double, :boolean, :geo_point] do
     %{"type" => Atom.to_string(type)}
   end
 

@@ -39,6 +39,14 @@ defmodule Orkestra.ES.PagedQuery do
           `range` (a `nil` bound is omitted); a list of op tuples is merged into
           a single combined `range`. All in `filter` context.
         * `:text` — a `match`, in `must` context (contributes to the score).
+        * `:geo_point` — only the `{:geo_distance, center, distance}` spec is
+          valid. `center` is a `%{lat:, lon:}` map (atom or string keys) and
+          `distance` is a verbatim ES distance string (`"25km"`, `"500m"`,
+          `"3mi"`). It compiles to a `geo_distance` filter in `filter` context:
+          `%{"geo_distance" => %{"distance" => distance, field => %{"lat" => ..,
+          "lon" => ..}}}`. Any other spec on a geo field returns
+          `{:error, {:invalid_geo_filter, field}}`. Geo filtering is root-level
+          only (geo fields inside embeds are not filterable).
         * the facets slot (see below) — a list/keyword of `{attr_code,
           value_code}` pairs. Each pair produces one `nested` query in `filter`
           context matching `attr_code` and `value_code` (a list of value codes
@@ -79,6 +87,8 @@ defmodule Orkestra.ES.PagedQuery do
     * `:sort` — a keyword list of `field => :asc | :desc`. The field must exist;
       a `:text` field is only sortable through its `keyword` sub-field, so it
       requires `keyword: true` or `sortable: true`, otherwise
+      `{:error, {:not_sortable, field}}`. A `:geo_point` field is never
+      sortable (`_geo_distance` sort is out of scope) and returns
       `{:error, {:not_sortable, field}}`. Sorting on embedded fields (either
       the embed name or a dotted path) is **not supported** — a current
       limitation — and returns `{:error, {:not_sortable, field}}`. The schema's `primary_key` is **always**
@@ -255,7 +265,10 @@ defmodule Orkestra.ES.PagedQuery do
           {:cont, {:ok, acc ++ facets_filter(field, to_pairs(spec))}}
 
         {:field, meta} ->
-          {:cont, {:ok, acc ++ [field_clause(meta, spec)]}}
+          case field_clause(meta, spec) do
+            {:error, _} = err -> {:halt, err}
+            clause -> {:cont, {:ok, acc ++ [clause]}}
+          end
 
         {:embed, embed} ->
           case embed_clauses_for(embed, "", to_pairs(spec)) do
@@ -284,6 +297,12 @@ defmodule Orkestra.ES.PagedQuery do
     end
   end
 
+  # A `:geo_point` field only accepts the `{:geo_distance, center, distance}`
+  # spec; the error carries the field's atom name (per the public contract).
+  # Any other type falls through to the shared, string-path `clause_for/3`.
+  defp field_clause(%{type: :geo_point, name: name}, spec),
+    do: geo_clause(Atom.to_string(name), name, spec)
+
   defp field_clause(%{type: type, name: name}, spec),
     do: clause_for(Atom.to_string(name), type, spec)
 
@@ -295,6 +314,46 @@ defmodule Orkestra.ES.PagedQuery do
       term_type?(base_type(type)) -> term_clause(field, spec)
       numeric_or_date?(base_type(type)) -> numeric_clause(field, spec)
       true -> {:filter, :term, %{field => spec}}
+    end
+  end
+
+  # -- geo filters ------------------------------------------------------------
+
+  # Builds an ES `geo_distance` filter for a `:geo_point` field. Only the
+  # `{:geo_distance, center, distance}` spec is valid (distance is a verbatim
+  # ES string such as `"25km"`); anything else — including a malformed center
+  # or a non-string distance — returns `{:invalid_geo_filter, field}`.
+  defp geo_clause(path, name, {:geo_distance, center, distance}) when is_binary(distance) do
+    case normalize_point(center) do
+      {:ok, point} ->
+        {:filter, :geo_distance, %{"distance" => distance, path => point}}
+
+      :error ->
+        {:error, {:invalid_geo_filter, name}}
+    end
+  end
+
+  defp geo_clause(_path, name, _spec), do: {:error, {:invalid_geo_filter, name}}
+
+  # Normalizes a center point map (`%{lat:, lon:}`, atom or string keys) into
+  # the string-keyed `%{"lat" => .., "lon" => ..}` ES expects.
+  defp normalize_point(center) when is_map(center) do
+    lat = geo_coord(center, :lat)
+    lon = geo_coord(center, :lon)
+
+    if is_number(lat) and is_number(lon) do
+      {:ok, %{"lat" => lat, "lon" => lon}}
+    else
+      :error
+    end
+  end
+
+  defp normalize_point(_), do: :error
+
+  defp geo_coord(point, key) do
+    case Map.fetch(point, key) do
+      {:ok, value} -> value
+      :error -> Map.get(point, Atom.to_string(key))
     end
   end
 
@@ -478,6 +537,12 @@ defmodule Orkestra.ES.PagedQuery do
         else
           {:error, {:not_sortable, field}}
         end
+
+      # Sorting a `:geo_point` by value is meaningless; `_geo_distance` sort is
+      # intentionally out of scope (see the module doc), so any sort on a geo
+      # field is rejected as not sortable.
+      %{type: :geo_point} ->
+        {:error, {:not_sortable, field}}
 
       %{} ->
         {:ok, %{key => %{"order" => order}}}

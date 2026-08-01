@@ -26,6 +26,7 @@ defmodule Orkestra.ES.PagedQueryTest do
       field(:price, :float)
       field(:stock, :integer)
       field(:released_at, :date, sortable: true)
+      field(:location, :geo_point)
       facets(:attributes)
     end
   end
@@ -45,6 +46,7 @@ defmodule Orkestra.ES.PagedQueryTest do
   defp bool(body), do: body["query"]["bool"]
   defp filters(body), do: bool(body)["filter"] || []
   defp musts(body), do: bool(body)["must"] || []
+  defp one_geo(body), do: Enum.find(filters(body), &Map.has_key?(&1, "geo_distance"))
 
   # -- baseline ---------------------------------------------------------------
 
@@ -160,6 +162,72 @@ defmodule Orkestra.ES.PagedQueryTest do
              } in nested
 
       assert length(nested) == 2
+    end
+  end
+
+  describe "build/2 geo_distance filters" do
+    test "geo_distance spec becomes a geo_distance filter" do
+      body = build!(filters: [location: {:geo_distance, %{lat: 45.5, lon: 9.2}, "25km"}])
+
+      assert %{
+               "geo_distance" => %{
+                 "distance" => "25km",
+                 "location" => %{"lat" => 45.5, "lon" => 9.2}
+               }
+             } in filters(body)
+    end
+
+    test "the center point accepts string keys" do
+      body = build!(filters: [location: {:geo_distance, %{"lat" => 45.5, "lon" => 9.2}, "10mi"}])
+
+      assert %{
+               "geo_distance" => %{
+                 "distance" => "10mi",
+                 "location" => %{"lat" => 45.5, "lon" => 9.2}
+               }
+             } in filters(body)
+    end
+
+    test "the distance string is passed through verbatim" do
+      body = build!(filters: [location: {:geo_distance, %{lat: 0.0, lon: 0.0}, "500m"}])
+      assert %{"geo_distance" => %{"distance" => "500m"}} = geo = one_geo(body)
+      assert geo["geo_distance"]["location"] == %{"lat" => 0.0, "lon" => 0.0}
+    end
+
+    test "a non-geo_distance spec on a geo field is invalid" do
+      assert {:error, {:invalid_geo_filter, :location}} =
+               PagedQuery.build(Product, filters: [location: "somewhere"])
+
+      assert {:error, {:invalid_geo_filter, :location}} =
+               PagedQuery.build(Product, filters: [location: {:gte, 5}])
+
+      assert {:error, {:invalid_geo_filter, :location}} =
+               PagedQuery.build(Product, filters: [location: ["a", "b"]])
+    end
+
+    test "a non-string distance is invalid" do
+      assert {:error, {:invalid_geo_filter, :location}} =
+               PagedQuery.build(Product,
+                 filters: [location: {:geo_distance, %{lat: 1, lon: 2}, 25}]
+               )
+    end
+
+    test "a malformed center point is invalid" do
+      assert {:error, {:invalid_geo_filter, :location}} =
+               PagedQuery.build(Product, filters: [location: {:geo_distance, %{lat: 1}, "25km"}])
+
+      assert {:error, {:invalid_geo_filter, :location}} =
+               PagedQuery.build(Product, filters: [location: {:geo_distance, "nope", "25km"}])
+    end
+
+    test "a geo_point field is never sortable" do
+      assert {:error, {:not_sortable, :location}} =
+               PagedQuery.build(Product, sort: [location: :asc])
+
+      assert {:error, {:not_sortable, :location}} =
+               PagedQuery.build(Product,
+                 sort: [location: {:geo_distance, %{lat: 1.0, lon: 2.0}, :asc}]
+               )
     end
   end
 

@@ -112,6 +112,13 @@ defmodule Orkestra.ES.Schema.Casting do
 
   defp encode_scalar(%Date{} = date, :date, _opts), do: Date.to_iso8601(date)
   defp encode_scalar(%DateTime{} = datetime, :date, _opts), do: DateTime.to_iso8601(datetime)
+
+  # A `:geo_point` is a `%{lat:, lon:}` map (atom or string keys on input);
+  # it serializes to the string-keyed `%{"lat" => .., "lon" => ..}` ES expects.
+  defp encode_scalar(point, :geo_point, _opts) when is_map(point) do
+    %{"lat" => geo_coord(point, :lat), "lon" => geo_coord(point, :lon)}
+  end
+
   defp encode_scalar(value, _type, _opts), do: value
 
   # -- decoding ---------------------------------------------------------------
@@ -131,7 +138,21 @@ defmodule Orkestra.ES.Schema.Casting do
     end
   end
 
+  # A `:geo_point` document `%{"lat" => .., "lon" => ..}` decodes back to the
+  # atom-keyed `%{lat:, lon:}` map.
+  defp decode_scalar(point, :geo_point, _opts) when is_map(point) do
+    %{lat: geo_coord(point, :lat), lon: geo_coord(point, :lon)}
+  end
+
   defp decode_scalar(value, _type, _opts), do: value
+
+  # Reads a coordinate from a point map that may use atom or string keys.
+  defp geo_coord(point, key) do
+    case Map.fetch(point, key) do
+      {:ok, value} -> value
+      :error -> Map.get(point, Atom.to_string(key))
+    end
+  end
 
   defp parse_date(value) do
     if String.contains?(value, "T") do

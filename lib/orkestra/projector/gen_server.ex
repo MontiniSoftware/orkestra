@@ -70,7 +70,9 @@ defmodule Orkestra.Projector.GenServer do
           event_store: module(),
           lifecycle_config: Lifecycle.config(),
           adapter_opts: keyword(),
-          subscription_ref: reference() | nil,
+          subscription_ref: reference() | pid() | nil,
+          subscription_monitor_ref: reference() | nil,
+          subscribe_attempts: non_neg_integer(),
           attempts: non_neg_integer(),
           halted: boolean(),
           writes_paused: boolean(),
@@ -119,6 +121,8 @@ defmodule Orkestra.Projector.GenServer do
         }),
       adapter_opts: Map.get(config, :adapter_opts, []),
       subscription_ref: nil,
+      subscription_monitor_ref: nil,
+      subscribe_attempts: 0,
       attempts: 0,
       halted: false,
       writes_paused: false,
@@ -166,6 +170,12 @@ defmodule Orkestra.Projector.GenServer do
   @doc false
   @impl GenServer
   def handle_call(:resume_writes, _from, state) do
+    # Demonitor the old relay first (with :flush) so its imminent teardown DOWN
+    # message does not reach the :DOWN clause and trigger a spurious re-subscribe.
+    if state.subscription_monitor_ref do
+      Process.demonitor(state.subscription_monitor_ref, [:flush])
+    end
+
     # Unsubscribe from the old subscription if active (RBLD-03)
     if state.subscription_ref && function_exported?(state.event_store, :unsubscribe, 1) do
       state.event_store.unsubscribe(state.subscription_ref)
@@ -182,7 +192,15 @@ defmodule Orkestra.Projector.GenServer do
     send(self(), :load_checkpoint)
 
     {:reply, :ok,
-     %{state | writes_paused: false, subscription_ref: nil, es_buffer: [], es_mode: :live}}
+     %{
+       state
+       | writes_paused: false,
+         subscription_ref: nil,
+         subscription_monitor_ref: nil,
+         subscribe_attempts: 0,
+         es_buffer: [],
+         es_mode: :live
+     }}
   end
 
   @doc false
@@ -216,20 +234,12 @@ defmodule Orkestra.Projector.GenServer do
   @doc false
   @impl GenServer
   def handle_info(:load_checkpoint, state) do
-    %{repo: repo, projector_name: projector_name, event_store: event_store} = state
+    %{repo: repo, projector_name: projector_name} = state
 
     case repo.get_by(Checkpoint, projector_name: projector_name) do
       nil ->
         # No checkpoint yet — replay from the beginning (position -1 → exclusive > gives 0+)
-        {:ok, ref} = event_store.subscribe_from_position(:all, -1, self())
-
-        Logger.info("Projector subscribed (no prior checkpoint)",
-          projector: projector_name,
-          last_position: -1,
-          orkestra: :projector
-        )
-
-        {:noreply, %{state | subscription_ref: ref, halted: false}}
+        subscribe_from(-1, "no prior checkpoint", state)
 
       %Checkpoint{halted: true} = checkpoint ->
         # Projector was halted — do NOT subscribe; stay idle until resolved
@@ -243,16 +253,35 @@ defmodule Orkestra.Projector.GenServer do
 
       %Checkpoint{last_position: last_position} ->
         # Resume from checkpoint (exclusive > semantics — D-01)
-        {:ok, ref} = event_store.subscribe_from_position(:all, last_position, self())
-
-        Logger.info("Projector subscribed (resuming from checkpoint)",
-          projector: projector_name,
-          last_position: last_position,
-          orkestra: :projector
-        )
-
-        {:noreply, %{state | subscription_ref: ref, halted: false}}
+        subscribe_from(last_position, "resuming from checkpoint", state)
     end
+  end
+
+  # The subscription relay (EventStoreDB adapter) went down — e.g. the Spear
+  # connection dropped AFTER a successful subscribe, so the relay received an
+  # `{:eos, _, _}` and exited. Without this monitor the projector would hold a
+  # dead relay pid and stay deaf forever. Re-derive the position from the
+  # persisted checkpoint and resubscribe (with backoff on failure). Guarded on
+  # the stored monitor ref so a stale/foreign DOWN cannot trigger it.
+  @doc false
+  @impl GenServer
+  def handle_info(
+        {:DOWN, monitor_ref, :process, _pid, reason},
+        %{subscription_monitor_ref: monitor_ref} = state
+      )
+      when is_reference(monitor_ref) do
+    Logger.warning("Projector subscription relay went down — resubscribing",
+      projector: state.projector_name,
+      reason: inspect(reason),
+      orkestra: :projector
+    )
+
+    # Reset the subscribe backoff counter: this is a fresh outage, retry promptly
+    # and let subscribe failures re-apply backoff from scratch.
+    send(self(), :load_checkpoint)
+
+    {:noreply,
+     %{state | subscription_ref: nil, subscription_monitor_ref: nil, subscribe_attempts: 0}}
   end
 
   # Discard events when halted — log and return without touching the Repo
@@ -316,6 +345,87 @@ defmodule Orkestra.Projector.GenServer do
   # ---------------------------------------------------------------------------
   # Private helpers
   # ---------------------------------------------------------------------------
+
+  # Resilient subscribe. A transiently-unreachable event store (e.g. Spear
+  # returning `{:error, :closed}` while the EventStoreDB connection is down)
+  # must NOT crash the projector or its supervisor: previously the hard match
+  # `{:ok, ref} = ...` raised a MatchError, crash-looping the projector until
+  # the host application exceeded its supervisor restart intensity and exited.
+  #
+  # Instead we treat a subscribe failure like Spear.Connection treats a dropped
+  # connection: log a warning and retry with capped exponential backoff, staying
+  # alive. When the store comes back the subscription starts and the projector
+  # resumes from the checkpoint.
+  #
+  # RETRY BUDGET — this uses a SEPARATE `subscribe_attempts` counter and retries
+  # INFINITELY (backoff capped at `backoff_cap_ms`, default 30s). It deliberately
+  # does NOT consume `lifecycle_config.max_retries` — that budget classifies a
+  # *poison event* (bad data) and, once exhausted, parks it to dead-letter and
+  # halts. A subscribe failure is an *infrastructure outage* with no event to
+  # blame and can last minutes; parking/halting on it would be wrong. We reuse
+  # only the backoff shape (`Lifecycle.next_delay/2`, base*2^n capped) for delay
+  # computation, not the classify/park machinery.
+  defp subscribe_from(from_position, reason_label, state) do
+    %{event_store: event_store, projector_name: projector_name} = state
+
+    case event_store.subscribe_from_position(:all, from_position, self()) do
+      {:ok, ref} ->
+        # EventStoreDB returns the relay PID; InMemory returns a plain reference.
+        # Monitor the relay so we notice if the Spear connection drops the
+        # subscription AFTER it was established (relay exits on {:eos, _, _}).
+        # A plain reference (InMemory) is not monitorable and never dies, so we
+        # skip it.
+        monitor_ref = if is_pid(ref), do: Process.monitor(ref), else: nil
+
+        Logger.info("Projector subscribed (#{reason_label})",
+          projector: projector_name,
+          last_position: from_position,
+          orkestra: :projector
+        )
+
+        {:noreply,
+         %{
+           state
+           | subscription_ref: ref,
+             subscription_monitor_ref: monitor_ref,
+             subscribe_attempts: 0,
+             halted: false
+         }}
+
+      {:error, reason} ->
+        new_attempts = state.subscribe_attempts + 1
+        # Backoff indexed by the pre-increment attempt: first failure → base.
+        delay = Lifecycle.next_delay(state.subscribe_attempts, state.lifecycle_config)
+
+        Logger.warning("Projector subscribe failed — retrying with backoff",
+          projector: projector_name,
+          last_position: from_position,
+          reason: inspect(reason),
+          subscribe_attempts: new_attempts,
+          delay_ms: delay,
+          orkestra: :projector
+        )
+
+        :telemetry.execute(
+          [:orkestra, :projector, :subscribe_retry],
+          %{subscribe_attempts: new_attempts, delay_ms: delay},
+          %{projector_name: projector_name, reason: inspect(reason)}
+        )
+
+        # Re-read the checkpoint on the next tick so the position is always
+        # re-derived from the source of truth (and the halted branch is honoured
+        # if the projector was halted meanwhile).
+        Process.send_after(self(), :load_checkpoint, delay)
+
+        {:noreply,
+         %{
+           state
+           | subscription_ref: nil,
+             subscription_monitor_ref: nil,
+             subscribe_attempts: new_attempts
+         }}
+    end
+  end
 
   # Core event-application logic (shared by normal delivery and retry)
   defp apply_event(event, state) do

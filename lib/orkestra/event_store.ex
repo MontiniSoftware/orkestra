@@ -85,14 +85,17 @@ defmodule Orkestra.EventStore do
   EventStoreDB subscriptions. Starting from `-1` replays all events from the
   beginning.
 
-  Returns `{:ok, subscription_ref}` on success, or `{:error, reason}` on
-  failure.
+  Returns `{:ok, subscription_handle}` on success, or `{:error, reason}` on
+  failure. The handle is **opaque**: the caller stores it and passes it back to
+  the adapter's `unsubscribe/1` (if exported) — it must not interpret it. The
+  `InMemory` adapter returns a `reference()`; the `EventStoreDB` adapter returns
+  the relay `pid()` that bridges Spear delivery to this contract.
   """
   @callback subscribe_from_position(
               stream_id :: stream_id() | :all,
               from_position :: integer(),
               subscriber :: pid()
-            ) :: {:ok, reference()} | {:error, term()}
+            ) :: {:ok, reference() | pid()} | {:error, term()}
 
   @doc "Returns the configured EventStore adapter."
   @spec impl() :: module()

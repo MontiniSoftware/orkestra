@@ -136,3 +136,11 @@ filter on `attr_code` + `value_code`.
 
 - MongoDB adapter, AWS SigV4 auth, Postgres repository equivalent.
 - Runtime-dynamic culture registration (cultures are declared in the schema).
+
+---
+
+## Phase 8 — Embedded schemas (completed 2026-07-29)
+
+**Summary:** Added support for nested, reusable embedded schemas via `embedded: true`, `embeds_one`, and `embeds_many` (with `mode: :object | :nested` trade-off). Embeds are declared separately, composed into root schemas, and recursively support full-text search, typed filters (with per-entry correlation in nested mode), and casting round-trips. Root-level `dynamic: "strict"` is inherited by embedded properties. Test suite: 529 tests, 0 failures, full integration coverage including correlation semantics (nested vs object false positives) and multi-level embedding.
+
+**Files added/modified:** `lib/orkestra/es/schema.ex` (embeds_one/embeds_many macros, embedded? flag, analyzer_refs collection), `lib/orkestra/es/schema/compiler.ex` (validation of embedded constraints), `lib/orkestra/es/schema/mapping.ex` (recursive object/nested property building), `lib/orkestra/es/schema/casting.ex` (recursive encode_embed/decode_embed), `lib/orkestra/es/paged_query.ex` (nested filters, dotted-path object filters, recursive nested query building for search), `examples/order_system/` (OrderItem embedded schema with mode: :nested), `test/integration/embedded_test.exs` (round-trip, correlation semantics, recursive nesting, searchable fields, facets + nested filters, dynamic: strict inheritance).

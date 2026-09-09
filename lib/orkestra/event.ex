@@ -186,4 +186,100 @@ defmodule Orkestra.Event do
   def generate_id do
     Base.hex_encode32(:crypto.strong_rand_bytes(12), case: :lower, padding: false)
   end
+
+  # ── Shared hydration / normalization helpers ────────────────────
+  #
+  # These are used both by `Orkestra.Aggregate.Root` (reconstructing event
+  # structs on replay) and by the `Orkestra.EventStore.EventStoreDB` adapter
+  # (normalizing the string-keyed maps Spear produces after a JSON round-trip
+  # back to the atom-keyed contract the InMemory adapter delivers). Keeping the
+  # logic here — rather than duplicated in each caller — guarantees a single
+  # definition of "what is a known event field" and "which keys may be atomized".
+
+  @doc """
+  Resolves the event module named by a stored `type` string
+  (e.g. `"MyApp.Events.Created"`).
+
+  Safe by construction:
+
+    * uses `String.to_existing_atom/1` (never creates a new atom) and
+      `Code.ensure_loaded?/1`;
+    * returns `{:ok, module}` only when the module is loaded **and** implements
+      the `Orkestra.Event` behaviour (exports `field_definitions/0`);
+    * returns `:error` for anything else — an unknown type, a `snapshot-*`
+      event, a foreign event, or a module that is not an Orkestra event.
+
+  Never raises.
+  """
+  @spec resolve_module(String.t()) :: {:ok, module()} | :error
+  def resolve_module(type) when is_binary(type) do
+    module = String.to_existing_atom("Elixir." <> type)
+
+    if Code.ensure_loaded?(module) and function_exported?(module, :field_definitions, 0) do
+      {:ok, module}
+    else
+      :error
+    end
+  rescue
+    ArgumentError -> :error
+  end
+
+  def resolve_module(_type), do: :error
+
+  @doc """
+  Normalizes the **first-level** keys of a stored event `data` map back to the
+  atom-keyed contract produced by `new/2`.
+
+  Given the event `type` string and a `data` map (possibly string-keyed — e.g.
+  as decoded from JSON by the EventStoreDB adapter), atomizes **only** the
+  top-level keys whose string form matches a declared field of the resolved
+  event module. Every other key, and **all values (including nested maps)**, are
+  left untouched.
+
+  Contract (deliberately narrow, to stay safe and predictable):
+
+    * If the module cannot be resolved (unknown type, snapshot, non-event), the
+      map is returned **unchanged** (string keys preserved). Never raises.
+    * No dynamic atom creation: the target atoms are the already-existing field
+      atoms declared at compile time.
+    * Shallow only: nested values are NOT recursed into. Converting nested
+      enums / datetimes / value objects is the **domain's** responsibility, not
+      the transport layer's.
+  """
+  @spec atomize_data(String.t(), map()) :: map()
+  def atomize_data(type, data) when is_map(data) do
+    case resolve_module(type) do
+      {:ok, module} ->
+        known = Enum.map(module.field_definitions(), fn {name, _type, _opts} -> name end)
+        atomize_known_keys(data, known)
+
+      :error ->
+        data
+    end
+  end
+
+  def atomize_data(_type, data), do: data
+
+  @doc """
+  Atomizes only the first-level keys of `map` whose string form is one of
+  `known_atoms`. Keys already atoms are kept as-is; any other key (a string not
+  in `known_atoms`, or any non-string key) and every value are left unchanged.
+
+  Creates no new atoms — the atomized keys come exclusively from `known_atoms`.
+  Idempotent: applying it to an already-normalized map is a no-op.
+  """
+  @spec atomize_known_keys(map(), [atom()]) :: map()
+  def atomize_known_keys(map, known_atoms) when is_map(map) do
+    lookup = Map.new(known_atoms, fn atom -> {Atom.to_string(atom), atom} end)
+
+    Map.new(map, fn {key, value} ->
+      case key do
+        key when is_binary(key) ->
+          {Map.get(lookup, key, key), value}
+
+        key ->
+          {key, value}
+      end
+    end)
+  end
 end

@@ -105,4 +105,73 @@ defmodule Orkestra.EventStore.InMemorySubscriptionTest do
       assert is_reference(ref)
     end
   end
+
+  describe "metadata normalization — adapter parity (connection-free)" do
+    # `Orkestra.Aggregate.Root.serialize_metadata/1` writes stored-event metadata
+    # with STRING keys for every adapter. The EventStoreDB adapter normalizes on
+    # read/delivery (known %Orkestra.Metadata{} keys → atom, custom keys stay
+    # string) via `Orkestra.Metadata.normalize_map/1`. These tests assert the
+    # InMemory adapter delivers the SAME normalized shape on both its read path
+    # (`load_events/1,2`) and its subscription-delivery path — without touching
+    # the stored write format. A custom (non-Metadata) key must survive as a
+    # string.
+    @serialized_metadata %{
+      "correlation_id" => "corr-1",
+      "causation_id" => "cause-1",
+      "actor_id" => "user-42",
+      "actor_type" => "user",
+      "source" => "web",
+      # custom, non-Metadata key — must stay a string
+      "tenant_id" => "acme"
+    }
+
+    @normalized_metadata %{
+      "tenant_id" => "acme",
+      correlation_id: "corr-1",
+      causation_id: "cause-1",
+      actor_id: "user-42",
+      actor_type: "user",
+      source: "web"
+    }
+
+    defp append_with_metadata do
+      InMemory.append_events(
+        "stream-meta",
+        [%{id: "e1", type: "A", data: %{}, metadata: @serialized_metadata}],
+        :any
+      )
+    end
+
+    test "load_events/1 returns known metadata keys as atoms and preserves custom string keys" do
+      append_with_metadata()
+
+      assert {:ok, [event], 0} = InMemory.load_events("stream-meta")
+      assert event.metadata == @normalized_metadata
+    end
+
+    test "load_events/2 returns normalized metadata" do
+      append_with_metadata()
+
+      assert {:ok, [event], 0} = InMemory.load_events("stream-meta", -1)
+      assert event.metadata == @normalized_metadata
+    end
+
+    test "subscription history replay delivers normalized metadata" do
+      append_with_metadata()
+
+      {:ok, _ref} = InMemory.subscribe_from_position(:all, -1, self())
+
+      assert_receive %{id: "e1", metadata: metadata}
+      assert metadata == @normalized_metadata
+    end
+
+    test "live subscription delivery delivers normalized metadata" do
+      {:ok, _ref} = InMemory.subscribe_from_position(:all, -1, self())
+
+      append_with_metadata()
+
+      assert_receive %{id: "e1", metadata: metadata}
+      assert metadata == @normalized_metadata
+    end
+  end
 end

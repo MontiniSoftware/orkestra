@@ -12,6 +12,8 @@ defmodule Orkestra.EventStore.EventStoreDB do
 
   @behaviour Orkestra.EventStore
 
+  alias Orkestra.EventStore.EventStoreDB.SubscriptionRelay
+
   require Logger
 
   # Spear exposes the gpb-generated EventStoreDB protobuf records as little
@@ -93,17 +95,7 @@ defmodule Orkestra.EventStore.EventStoreDB do
         )
       end)
 
-    # Keep the input contract identical to the InMemory adapter and the declared
-    # `expected_revision()` type (`non_neg_integer() | :any | :no_stream`). We do
-    # NOT special-case `-1`: InMemory rejects it (falls to wrong-version), so a
-    # bare `-1` would diverge between adapters (WR-06). Use `:no_stream` to assert
-    # an empty stream.
-    expect =
-      case expected_revision do
-        :any -> :any
-        :no_stream -> :empty
-        rev when is_integer(rev) and rev >= 0 -> rev
-      end
+    expect = map_expected_revision(expected_revision)
 
     case Spear.append(spear_events, @connection, stream_id, expect: expect, raw?: true) do
       {:ok, response} ->
@@ -161,29 +153,52 @@ defmodule Orkestra.EventStore.EventStoreDB do
   Subscribes `subscriber` to receive events from `stream_id_or_all` starting
   after `from_position` (exclusive).
 
-  Delegates to `Spear.subscribe/4` with `from: from_position`. Spear's `from:`
-  parameter is exclusive — it delivers events with position > `from_position`,
-  matching the D-01 monotonic-integer contract and InMemory's semantics.
+  The `from_position` is translated by `map_subscribe_from/2` (see there for the
+  full mapping and rationale):
 
-  The `subscriber` process will receive `Spear.Event.t()` messages. Use
-  `global_position_from_spear_event/1` to extract the `:global_position` integer
-  (mapped from `commit_position`) for checkpoint updates.
+    * `-1` / `nil` → `:start` (replay from the beginning, exactly once).
+    * `:all` + a non-negative commit_position → a `%Spear.Filter.Checkpoint{}`
+      (a raw integer cannot be used for `:all` — Spear would raise
+      `FunctionClauseError` in `map_all_position/1`).
+    * a named stream + a non-negative revision → the integer revision.
 
-  > **Phase 2 note:** The live `$all` exclusive `from:` semantics and the
-  > `commit_position` integer mapping (RESEARCH.md A4/A5 — Open Question 1) are
-  > verified against a live EventStoreDB instance in Phase 2 integration tests.
-  > The Phase 1 test is compile/wiring-level only.
+  All non-`:start` forms are **exclusive** in Spear: `from: N` delivers only
+  events strictly after `N`, matching the D-01 monotonic contract, InMemory's
+  semantics, and the exactly-once projector — resuming from a saved checkpoint
+  never re-delivers the event at that checkpoint, so no manual skip is required.
 
-  Returns `{:ok, subscription_ref}` on success or `{:error, exception}` on failure.
+  ## Delivery shape (parity with InMemory)
+
+  Delivery does **not** hand `subscriber` the raw `%Spear.Event{}` structs that
+  `Spear.subscribe/4` pushes. Instead a
+  `Orkestra.EventStore.EventStoreDB.SubscriptionRelay` process sits between
+  Spear and `subscriber` and delivers `stored_event_with_position()` maps —
+  `%{id, type, data, metadata, stream_revision, global_position}`, the same
+  shape produced by `load_events/1,2` and the same shape delivered by
+  `Orkestra.EventStore.InMemory`. That is exactly what
+  `Orkestra.Projector.GenServer.handle_info/2` pattern-matches on
+  (`%{global_position: _}`); handed raw Spear structs it would match nothing.
+  The relay also drops Spear's control messages (`%Spear.Filter.Checkpoint{}`,
+  `{:caught_up, _}`, `{:fell_behind, _}`) which the projector has no clause for,
+  and applies the link-de-duplication subscription options (see the relay
+  moduledoc).
+
+  The returned handle is the **relay pid** (an opaque subscription handle, not a
+  `Spear` reference). Pass it to `unsubscribe/1` to tear the subscription down;
+  it is also torn down automatically when `subscriber` dies.
+
+  Returns `{:ok, subscription_handle}` on success or `{:error, reason}` on
+  failure.
   """
   @spec subscribe_from_position(
           Orkestra.EventStore.stream_id() | :all,
           integer(),
           pid()
-        ) :: {:ok, reference()} | {:error, term()}
+        ) :: {:ok, pid()} | {:error, term()}
   @impl true
   def subscribe_from_position(stream_id_or_all, from_position, subscriber) do
-    Spear.subscribe(@connection, subscriber, stream_id_or_all, from: from_position)
+    from = map_subscribe_from(stream_id_or_all, from_position)
+    SubscriptionRelay.start(@connection, stream_id_or_all, from, subscriber)
   rescue
     e ->
       Logger.error("EventStoreDB subscribe failed",
@@ -196,18 +211,110 @@ defmodule Orkestra.EventStore.EventStoreDB do
       {:error, e}
   end
 
+  @doc """
+  Cancels the subscription identified by `handle` (the relay pid returned by
+  `subscribe_from_position/3`) and stops delivery.
+
+  Idempotent: returns `:ok` whether or not the relay is still alive. The
+  `Orkestra.Projector.GenServer` calls this on rebuild (to resubscribe from a
+  reset checkpoint) and it is a no-op-safe cleanup path; on normal projector
+  termination the relay tears itself down via its subscriber monitor, so an
+  explicit call is not required there.
+  """
+  @spec unsubscribe(pid()) :: :ok
+  def unsubscribe(handle), do: SubscriptionRelay.stop(handle)
+
   # ── Private ─────────────────────────────────────────────────────
+
+  @doc false
+  # Maps the adapter-agnostic `expected_revision()` to Spear's `:expect` value.
+  #
+  # `:no_stream` and the empty-stream head revision `-1` both assert an empty
+  # stream, which Spear expresses as `:empty`. Mapping `-1 -> :empty` keeps
+  # parity with the InMemory adapter *and* with `Orkestra.Aggregate.Root`, which
+  # loads an empty stream as revision `-1` (see `load_events/1`) and passes that
+  # value straight into `append_events/3` on first write. InMemory accepts `-1`
+  # for an empty stream because the current revision of an empty stream is `-1`,
+  # so its `expected_revision == current_revision` branch matches; the previous
+  # comment here claiming "InMemory rejects it" was factually wrong and caused a
+  # `CaseClauseError` on new-stream appends against real EventStoreDB.
+  def map_expected_revision(:any), do: :any
+  def map_expected_revision(:no_stream), do: :empty
+  def map_expected_revision(-1), do: :empty
+  def map_expected_revision(rev) when is_integer(rev) and rev >= 0, do: rev
+
+  @doc false
+  # Maps the adapter-agnostic `from_position` to Spear's `:from` option.
+  #
+  # Spear `from:` semantics (deps/spear/lib/spear.ex, `subscribe/4` docs, and
+  # deps/spear/lib/spear/reading.ex `map_all_position/1` / `map_stream_revision/1`):
+  #   * `:start` / `:end` are INCLUSIVE (`:start` returns the first event).
+  #   * a plain integer is an EXCLUSIVE *stream revision* — valid only for a
+  #     named stream, NOT for `:all` (`map_all_position/1` has no integer clause,
+  #     so `from: <int>` on `:all` raises FunctionClauseError).
+  #   * a `%Spear.Event{}` or `%Spear.Filter.Checkpoint{}` is EXCLUSIVE.
+  #
+  # This exclusivity is exactly the orkestra contract for `subscribe_from_position/3`:
+  # resuming from position N must NOT re-deliver the event at N (the Postgres-backed
+  # projector is exactly-once). So no manual skip is needed.
+  #
+  # `-1` (and `nil`) is the initial "no checkpoint" position → `:start`, which
+  # replays every event from the beginning exactly once.
+  #
+  # A `$all` position is a `(commit_position, prepare_position)` pair; the orkestra
+  # checkpoint only carries the commit_position (surfaced as `:global_position`),
+  # so on resume we build a `%Spear.Filter.Checkpoint{}` using it for both fields.
+  # This is exact for orkestra's single-event-per-append `$all` positions; see the
+  # note on `global_position_from_spear_event/1` for the multi-event caveat.
+  def map_subscribe_from(_stream, position) when position in [nil, -1], do: :start
+
+  def map_subscribe_from(:all, position) when is_integer(position) and position >= 0 do
+    %Spear.Filter.Checkpoint{commit_position: position, prepare_position: position}
+  end
+
+  def map_subscribe_from(_stream, position) when is_integer(position) and position >= 0 do
+    position
+  end
 
   # Extracts the commit_position from a Spear.Event and surfaces it as the
   # adapter-agnostic :global_position integer (D-01).
   #
-  # NOTE: `commit_position` is used directly as the monotonic integer per D-01.
-  # For :all stream subscriptions where `prepare_position != commit_position`,
-  # the Spear docs recommend using `Spear.Event.to_checkpoint/1` for idempotent
-  # position tracking. Whether `from: commit_position_integer` works directly
-  # or requires a checkpoint struct for :all subscriptions in all EventStoreDB
-  # versions is verified against a live EventStoreDB in Phase 2 (RESEARCH.md
-  # Open Question 1, Assumptions A4 and A5).
+  # WHY commit_position is a correct single-integer position on EventStoreDB
+  # 24.10 (including the multi-event-append / resume case):
+  #
+  # A `$all` position is conceptually a `(commit_position, prepare_position)`
+  # pair, and `$all` is ordered by that pair lexicographically. The concern
+  # (classic on older ESDB log formats) is that a single atomic
+  # `append_events/3` carrying MULTIPLE events (e.g. Aggregate.Root emitting
+  # `[InviteAccepted, MemberJoined]` in one decide) writes them under ONE shared
+  # commit_position with distinct prepare_positions; if only commit_position is
+  # checkpointed, a crash between the two intra-commit events could skip the
+  # second on resume (exclusive `from: {commit, commit}` would not re-deliver a
+  # prepare < commit).
+  #
+  # This was verified empirically against a live `eventstore/eventstore:24.10.0`
+  # (insecure, MEM_DB, RUN_PROJECTIONS=None): appending two events in a single
+  # `Spear.append/4` call yields, on the `$all` feed, TWO DISTINCT
+  # commit_positions (e.g. 1167 and 1288), and for every event
+  # `commit_position == prepare_position`. In other words 24.10 assigns each
+  # record its own unique, strictly-monotonic log position and reports it as
+  # both fields. Consequently:
+  #
+  #   * commit_position is unique per event (no intra-commit collision), so it is
+  #     a valid gap-containing-but-monotonic `:global_position` and a valid
+  #     unique key for the projector's `(projector_name, position)` read-model
+  #     index; and
+  #   * resuming with `%Spear.Filter.Checkpoint{commit: P, prepare: P}` is EXACT
+  #     — since the boundary event has commit == prepare == P, exclusive `>`
+  #     delivers strictly the events after it, with neither loss nor duplication.
+  #
+  # The single-integer checkpoint schema is therefore correct for 24.10 and no
+  # schema change (storing both positions) is needed. The intra-commit
+  # multi-event + mid-restart resume path is covered by an acceptance test
+  # (test/integration/projector_event_store_db_test.exs). CAVEAT: on a
+  # hypothetical ESDB configuration that DID share one commit_position across an
+  # atomic multi-event append, this resume could skip intra-commit events; that
+  # regime is not produced by 24.10 as used here.
   defp global_position_from_spear_event(%Spear.Event{metadata: meta}) do
     case meta do
       %{commit_position: pos} when is_integer(pos) -> pos
@@ -215,14 +322,30 @@ defmodule Orkestra.EventStore.EventStoreDB do
     end
   end
 
-  defp to_stored_event(%Spear.Event{} = event) do
-    base = %{
-      id: event.id,
-      type: event.type,
-      data: event.body,
-      metadata: extract_custom_metadata(event),
-      stream_revision: event.metadata.stream_revision
-    }
+  @doc false
+  # Maps a `%Spear.Event{}` (as read or delivered by Spear) to the
+  # adapter-agnostic stored-event map. Shared by `load_events/1,2` (plain reads,
+  # where `commit_position` may be absent → no `:global_position` key) and by
+  # `SubscriptionRelay` (subscription delivery, where `$all` events always carry
+  # a `commit_position` → the map is a `stored_event_with_position()`). Public
+  # (`@doc false`) so the relay and connection-free unit tests can exercise the
+  # transformation directly.
+  def to_stored_event(%Spear.Event{} = event) do
+    base =
+      %{
+        id: event.id,
+        type: event.type,
+        # Spear decodes the JSON body into a STRING-keyed map. Normalize the
+        # first-level keys back to the event struct's atom fields so this adapter
+        # delivers the same atom-keyed `:data` the InMemory adapter does (the
+        # projector and `Aggregate.Root.evolve/2` read `event.data.field` via
+        # atoms). Unknown/foreign event types keep their string keys (see
+        # `Orkestra.Event.atomize_data/2`); nested values are left untouched.
+        data: Orkestra.Event.atomize_data(event.type, event.body),
+        metadata: extract_custom_metadata(event),
+        stream_revision: event.metadata.stream_revision
+      }
+      |> put_stream_id(event)
 
     # Only add `:global_position` when a real non-negative position is present.
     # `to_stored_event/1` is shared by plain reads (where `commit_position` may
@@ -237,13 +360,28 @@ defmodule Orkestra.EventStore.EventStoreDB do
     end
   end
 
+  # Adds `:stream_id` (the originating stream) to the stored-event map when Spear
+  # surfaces it (`metadata.stream_name`, present on read/subscription events).
+  # This mirrors the InMemory adapter, which stamps `:stream_id` on every stored
+  # event — keeping the delivered/loaded shape at parity across adapters so
+  # consumers can filter by stream. Reads before/without a stream_name simply
+  # omit the key.
+  defp put_stream_id(base, %Spear.Event{metadata: %{stream_name: name}}) when is_binary(name),
+    do: Map.put(base, :stream_id, name)
+
+  defp put_stream_id(base, _event), do: base
+
   # EventStoreDB / Spear surfaces `custom_metadata` as a binary (typically a
   # JSON string), never a map (see deps/spear/lib/spear/event.ex). Decode it
   # back into the metadata map written on append (CR-04).
   defp extract_custom_metadata(%Spear.Event{metadata: %{custom_metadata: bin}})
        when is_binary(bin) and bin != "" do
     case Jason.decode(bin) do
-      {:ok, map} when is_map(map) -> map
+      # Normalize the JSON-decoded (string-keyed) metadata's first-level known
+      # keys back to the `%Orkestra.Metadata{}` atom fields, at parity with the
+      # atom-keyed known fields a caller reads on the InMemory adapter. Custom
+      # (non-Metadata) keys and all values stay as decoded.
+      {:ok, map} when is_map(map) -> Orkestra.Metadata.normalize_map(map)
       _ -> %{}
     end
   end

@@ -84,7 +84,7 @@ defmodule Orkestra.EventStore.InMemory do
 
     case events do
       [] -> {:ok, [], -1}
-      events -> {:ok, events, length(events) - 1}
+      events -> {:ok, Enum.map(events, &normalize_delivered_metadata/1), length(events) - 1}
     end
   end
 
@@ -177,6 +177,7 @@ defmodule Orkestra.EventStore.InMemory do
     snapshot
     |> filter_for_stream(stream_id_or_all)
     |> Enum.filter(fn e -> e.global_position > from_position end)
+    |> Enum.map(&normalize_delivered_metadata/1)
     |> Enum.each(fn e -> send(subscriber, e) end)
 
     Logger.debug("Subscribed to event stream",
@@ -250,11 +251,28 @@ defmodule Orkestra.EventStore.InMemory do
     Enum.each(state.subscribers, fn {_ref, subscriber_pid, sub_stream} ->
       stamped
       |> filter_for_stream(sub_stream)
+      |> Enum.map(&normalize_delivered_metadata/1)
       |> Enum.each(fn e -> send(subscriber_pid, e) end)
     end)
 
     {{:ok, new_revision}, new_state}
   end
+
+  # Normalizes the `:metadata` of a stored event at the read/delivery boundary to
+  # the first-level key contract of `%Orkestra.Metadata{}`: known Metadata fields
+  # become atom keys, custom keys stay strings (see `Orkestra.Metadata.normalize_map/1`).
+  # This mirrors the EventStoreDB adapter's `extract_custom_metadata/1`, which
+  # applies the same normalization on decoded metadata, so both adapters deliver
+  # metadata with the same key shape. The stored format is left untouched
+  # (`Orkestra.Aggregate.Root.serialize_metadata/1` still writes string keys and
+  # is not involved here); only the value handed to callers/subscribers is
+  # normalized. No dynamic atoms are created. Events without a `:metadata` key
+  # pass through unchanged.
+  defp normalize_delivered_metadata(%{metadata: metadata} = event) do
+    %{event | metadata: Orkestra.Metadata.normalize_map(metadata)}
+  end
+
+  defp normalize_delivered_metadata(event), do: event
 
   # Filter global_events for a specific stream or return all for :all
   defp filter_for_stream(events, :all), do: events

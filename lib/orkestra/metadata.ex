@@ -61,6 +61,38 @@ defmodule Orkestra.Metadata do
     }
   end
 
+  @doc """
+  The known first-level keys of `%Orkestra.Metadata{}`.
+
+  These are the only keys `normalize_map/1` is allowed to atomize.
+  """
+  @spec field_keys() :: [atom()]
+  def field_keys do
+    __struct__() |> Map.from_struct() |> Map.keys()
+  end
+
+  @doc """
+  Normalizes a stored/decoded metadata **map** to the first-level key contract
+  of `%Orkestra.Metadata{}`.
+
+  Atomizes only the known metadata keys (the fields of `%Orkestra.Metadata{}`,
+  see `field_keys/0`); custom keys (kept as strings) and all values are left
+  untouched. Returns a plain map
+  — **not** a `%Orkestra.Metadata{}` struct — so custom metadata keys the host
+  attached (e.g. request/tenant tags) survive the round-trip. Shallow only, and
+  never raises.
+
+  Used by the EventStoreDB adapter so metadata decoded from JSON (string keys)
+  matches the shape a caller would read via atom keys, at parity with the
+  InMemory adapter's atom-keyed known fields.
+  """
+  @spec normalize_map(map()) :: map()
+  def normalize_map(map) when is_map(map) do
+    Orkestra.Event.atomize_known_keys(map, field_keys())
+  end
+
+  def normalize_map(other), do: other
+
   defp generate_id do
     Base.hex_encode32(:crypto.strong_rand_bytes(16), case: :lower, padding: false)
   end

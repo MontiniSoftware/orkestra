@@ -195,23 +195,27 @@ defmodule Orkestra.Aggregate.Root do
   end
 
   # Reconstruct Event structs from stored event maps.
-  # stored events have %{type: "Module.Name", data: %{...}}
+  # stored events have %{type: "Module.Name", data: %{...}}.
+  #
+  # The `data` map is passed through as stored: the event store adapter is
+  # responsible for delivering it with the atom-keyed field contract
+  # (`Orkestra.EventStore.EventStoreDB` normalizes the JSON-decoded string keys
+  # via `Orkestra.Event.atomize_data/2`; InMemory keeps the original atom keys),
+  # so `evolve/2` can read `event.data.field` regardless of adapter.
   defp hydrate_event(%{type: type, data: data} = stored) when is_binary(type) do
-    module = String.to_existing_atom("Elixir.#{type}")
+    case Orkestra.Event.resolve_module(type) do
+      {:ok, module} ->
+        struct(module, %{
+          id: stored[:id],
+          type: type,
+          data: data,
+          metadata: nil,
+          occurred_at: nil
+        })
 
-    if function_exported?(module, :__struct__, 0) do
-      struct(module, %{
-        id: stored[:id],
-        type: type,
-        data: data,
-        metadata: nil,
-        occurred_at: nil
-      })
-    else
-      stored
+      :error ->
+        stored
     end
-  rescue
-    _ -> stored
   end
 
   defp hydrate_event(event), do: event

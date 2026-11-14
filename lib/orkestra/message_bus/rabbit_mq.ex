@@ -5,7 +5,18 @@ defmodule Orkestra.MessageBus.RabbitMQ do
   Commands use exchange `orkestra.commands` with one queue per command type (competing consumers).
   Events use exchange `orkestra.events` with one queue per subscriber (fan-out per handler).
 
-  Ack/nack is handled natively via AMQP: handler returns `:ok` → ack, `{:error, _}` → nack+requeue.
+  Ack/nack is handled natively via AMQP: handler returns `:ok` → ack. A handler
+  returning `{:error, _}` (or raising) gets the message again **a bounded number
+  of times**: the message is republished to that handler's queue only (default
+  exchange, routing key = queue) with `x-retry-count` incremented and a short
+  backoff, then the original is acked. Once the retries are exhausted it is
+  rejected without requeue and lands in the dead-letter queue. The bound is the
+  subscriber's `:max_retries` (`Orkestra.EventHandler`'s option), else the
+  message's `x-max-retries` header, else 3.
+
+  Every delivery is handled in a task, started with
+  `OpentelemetryProcessPropagator.Task` when that optional dependency is
+  present (the trace context follows), with `Task` otherwise.
 
   ## Setup
 
@@ -113,10 +124,8 @@ defmodule Orkestra.MessageBus.RabbitMQ do
 
         {:noreply, state}
 
-      {_tag, handler, channel} ->
-        OpentelemetryProcessPropagator.Task.start(fn ->
-          handle_delivery(channel, handler, body, meta)
-        end)
+      consumer ->
+        start_task(fn -> handle_delivery(consumer, body, meta) end)
 
         {:noreply, state}
     end
@@ -131,7 +140,7 @@ defmodule Orkestra.MessageBus.RabbitMQ do
     # Commands: shared queue per topic (competing consumers)
     queue = "orkestra.cmd.#{topic}"
 
-    case setup_consumer(@commands_exchange, queue, topic, handler) do
+    case setup_consumer(@commands_exchange, queue, topic, handler, nil) do
       {:ok, consumer} ->
         {:reply, :ok, %{state | consumers: [consumer | state.consumers]}}
 
@@ -140,12 +149,12 @@ defmodule Orkestra.MessageBus.RabbitMQ do
     end
   end
 
-  def handle_call({:subscribe_event, topic, handler, _opts}, _from, state) do
+  def handle_call({:subscribe_event, topic, handler, opts}, _from, state) do
     # Events: dedicated queue per handler (fan-out)
     handler_name = handler |> Module.split() |> List.last() |> Macro.underscore()
     queue = "orkestra.evt.#{topic}.#{handler_name}"
 
-    case setup_consumer(@events_exchange, queue, topic, handler) do
+    case setup_consumer(@events_exchange, queue, topic, handler, opts[:max_retries]) do
       {:ok, consumer} ->
         {:reply, :ok, %{state | consumers: [consumer | state.consumers]}}
 
@@ -184,7 +193,7 @@ defmodule Orkestra.MessageBus.RabbitMQ do
     end
   end
 
-  defp setup_consumer(exchange, queue, routing_key, handler) do
+  defp setup_consumer(exchange, queue, routing_key, handler, max_retries) do
     queue_opts = [
       durable: true,
       arguments: [
@@ -198,16 +207,31 @@ defmodule Orkestra.MessageBus.RabbitMQ do
          {:ok, _} <- AMQP.Queue.declare(channel, queue, queue_opts),
          :ok <- AMQP.Queue.bind(channel, queue, exchange, routing_key: routing_key),
          {:ok, consumer_tag} <- AMQP.Basic.consume(channel, queue) do
-      {:ok, {consumer_tag, handler, channel}}
+      {:ok,
+       %{
+         tag: consumer_tag,
+         handler: handler,
+         channel: channel,
+         queue: queue,
+         max_retries: max_retries
+       }}
     end
   end
 
-  defp handle_delivery(channel, handler, body, meta) do
-    OTel.extract_context_from_headers(meta[:headers])
+  # The trace context follows the delivery into its task when the optional
+  # `opentelemetry_process_propagator` is there.
+  defp start_task(fun) do
+    if Code.ensure_loaded?(OpentelemetryProcessPropagator.Task),
+      do: apply(OpentelemetryProcessPropagator.Task, :start, [fun]),
+      else: Task.start(fun)
+  end
+
+  defp handle_delivery(%{channel: channel, handler: handler} = consumer, body, meta) do
+    OTel.extract_context_from_headers(headers(meta))
 
     Tracer.with_span "orkestra.rabbitmq.consume", %{kind: :consumer} do
       retry_count = get_retry_count(meta)
-      max_retries = get_max_retries(meta)
+      max_retries = consumer.max_retries || get_max_retries(meta)
 
       result =
         try do
@@ -232,12 +256,14 @@ defmodule Orkestra.MessageBus.RabbitMQ do
           AMQP.Basic.reject(channel, meta.delivery_tag, requeue: false)
 
         {:error, reason} ->
-          handle_failure(channel, meta, handler, reason, retry_count, max_retries)
+          handle_failure(consumer, body, meta, reason, retry_count, max_retries)
       end
     end
   end
 
-  defp handle_failure(channel, meta, handler, reason, retry_count, max_retries) do
+  defp handle_failure(consumer, body, meta, reason, retry_count, max_retries) do
+    %{channel: channel, handler: handler} = consumer
+
     if retry_count < max_retries do
       Tracer.add_event("message.retry", %{
         "retry.count" => retry_count + 1,
@@ -246,7 +272,7 @@ defmodule Orkestra.MessageBus.RabbitMQ do
         "handler" => inspect(handler)
       })
 
-      Logger.warning("Handler nack, requeuing",
+      Logger.warning("Handler failed, retrying",
         handler: inspect(handler),
         attempt: retry_count + 1,
         max_retries: max_retries,
@@ -254,7 +280,7 @@ defmodule Orkestra.MessageBus.RabbitMQ do
         orkestra: :rabbitmq
       )
 
-      AMQP.Basic.nack(channel, meta.delivery_tag, requeue: true)
+      retry(consumer, body, meta, retry_count + 1)
     else
       Tracer.add_event("message.dead_letter", %{
         "retry.max" => max_retries,
@@ -274,42 +300,92 @@ defmodule Orkestra.MessageBus.RabbitMQ do
     end
   end
 
-  # Extract retry count from x-death header (set by RabbitMQ on DLX redelivery)
-  # or from custom x-retry-count header
-  defp get_retry_count(meta) do
-    headers = meta[:headers] || []
+  # A nack with `requeue: true` would hand the message back unchanged (no
+  # `x-death`, no counter): the handler would get it forever. So the message is
+  # republished to this consumer's queue only — the default exchange routes by
+  # queue name, so the other subscribers of the topic never see it again — with
+  # the attempt in `x-retry-count`, after a short backoff; then the original is
+  # acked. If the republish fails the original is requeued as is.
+  defp retry(%{channel: channel, queue: queue}, body, meta, attempt) do
+    Process.sleep(backoff(attempt))
 
-    case List.keyfind(headers, "x-death", 0) do
-      {_, _, deaths} when is_list(deaths) ->
-        deaths
-        |> Enum.map(fn death ->
-          case List.keyfind(death, "count", 0) do
-            {_, _, count} -> count
-            _ -> 0
-          end
-        end)
-        |> Enum.sum()
+    headers =
+      meta
+      |> headers()
+      |> List.keydelete("x-retry-count", 0)
+      |> List.insert_at(0, {"x-retry-count", :long, attempt})
+
+    opts =
+      [
+        persistent: true,
+        content_type: meta[:content_type],
+        message_id: meta[:message_id],
+        correlation_id: meta[:correlation_id],
+        type: meta[:type],
+        headers: headers
+      ]
+      |> Enum.reject(fn {_key, value} -> value in [nil, :undefined] end)
+
+    case AMQP.Basic.publish(channel, "", queue, body, opts) do
+      :ok -> AMQP.Basic.ack(channel, meta.delivery_tag)
+      _error -> AMQP.Basic.nack(channel, meta.delivery_tag, requeue: true)
+    end
+  end
+
+  # 200 ms, 400 ms, 800 ms… capped at 5 s.
+  defp backoff(attempt), do: min(200 * Integer.pow(2, attempt - 1), 5_000)
+
+  defp headers(meta) do
+    case meta[:headers] do
+      headers when is_list(headers) -> headers
+      _ -> []
+    end
+  end
+
+  # The attempt from the `x-retry-count` this module writes on a retry, or from
+  # RabbitMQ's `x-death` when the message came back through a dead-letter cycle.
+  defp get_retry_count(meta) do
+    headers = headers(meta)
+
+    case List.keyfind(headers, "x-retry-count", 0) do
+      {_, _, count} when is_integer(count) ->
+        count
 
       _ ->
-        # Fallback: custom header
-        case List.keyfind(headers, "x-retry-count", 0) do
-          {_, _, count} -> count
-          _ -> 0
+        case List.keyfind(headers, "x-death", 0) do
+          {_, _, deaths} when is_list(deaths) ->
+            deaths
+            |> Enum.map(fn death ->
+              case death do
+                {:table, fields} -> death_count(fields)
+                fields when is_list(fields) -> death_count(fields)
+                _ -> 0
+              end
+            end)
+            |> Enum.sum()
+
+          _ ->
+            0
         end
     end
   end
 
-  defp get_max_retries(meta) do
-    headers = meta[:headers] || []
+  defp death_count(fields) do
+    case List.keyfind(fields, "count", 0) do
+      {_, _, count} when is_integer(count) -> count
+      _ -> 0
+    end
+  end
 
-    case List.keyfind(headers, "x-max-retries", 0) do
+  defp get_max_retries(meta) do
+    case List.keyfind(headers(meta), "x-max-retries", 0) do
       {_, _, max} when is_integer(max) -> max
       _ -> @default_max_retries
     end
   end
 
   defp find_consumer(consumers, tag) do
-    Enum.find(consumers, fn {t, _h, _c} -> t == tag end)
+    Enum.find(consumers, &(&1.tag == tag))
   end
 
   # ── Serialization ───────────────────────────────────────────────

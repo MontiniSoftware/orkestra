@@ -73,4 +73,4 @@ if Code.ensure_loaded?(Snap.Cluster) do
   Orkestra.Test.ESIntegration.start_cluster()
 end
 
-ExUnit.start(exclude: [:postgres, :elasticsearch, :integration])
+ExUnit.start(exclude: [:postgres, :elasticsearch, :integration, :rabbitmq])
